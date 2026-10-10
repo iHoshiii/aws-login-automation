@@ -1,7 +1,10 @@
 import type { Locator, Page } from "playwright-core";
+import { isSelfProfileUrl, readSignedInSelfProfile, SelfProfileIdentityError } from "./identity";
+import { createAwsPageReadiness } from "./readiness";
+import { createOwnArticleActivity, OwnArticleActivityError } from "./activity";
 
 const ORIGIN = "https://builder.aws.com";
-const LIKE_SELECTOR = 'main button[aria-pressed]:not(#comments button)';
+const LIKE_SELECTOR = 'main button[aria-pressed][aria-label^="Like this article"]:not(#comments button)';
 const COMMENT_SELECTOR = '#comments [class*="_comment-main_"]';
 const BODY_SELECTOR = '[class*="_comment-content_"] > [class*="_editor-container_"]';
 
@@ -19,6 +22,7 @@ export interface SiteProfile {
   version: 1;
   capturedAt: string;
   accountProfileUrl: string;
+  identitySource?: "self_profile";
   accountSelector: string;
   accountMenuSelector?: string;
   commentEditorSelector: string;
@@ -65,6 +69,8 @@ export interface AwsSiteDriver {
 }
 
 export interface AwsSiteOptions {
+  /** The daily local runner uses the Home feed shown to the signed-in owner. */
+  feedMode?: "home" | "latest";
   maxCommentPages?: number;
   maxDiscoveryPages?: number;
   timeoutMs?: number;
@@ -99,6 +105,9 @@ function validateProfile(value: SiteProfile, requireControls = true): void {
     throw new AwsSiteError("selector_unverified", "Run aws:connect to capture the signed-in Builder controls.");
   }
   canonicalProfileUrl(value.accountProfileUrl);
+  if (value.identitySource !== undefined && value.identitySource !== "self_profile") {
+    throw new AwsSiteError("selector_unverified", "The recorded account identity source is unsupported. Reconnect your account.");
+  }
   for (const selector of [value.accountSelector, value.commentEditorSelector, value.commentSubmitSelector, value.likeSelector]) {
     if (typeof selector !== "string" || !selector.trim() || selector.length > 500) {
       throw new AwsSiteError("selector_unverified", "The recorded Builder controls are incomplete. Run aws:connect again.");
@@ -156,7 +165,7 @@ async function uniqueVisible(locator: Locator, name: string, timeoutMs: number):
   }
 }
 
-async function requireIdentity(page: Page, profile: SiteProfile, timeoutMs: number, capturing = false): Promise<void> {
+async function requireIdentity(page: Page, profile: SiteProfile, timeoutMs: number, capturing = false, verifySelfAccount?: () => Promise<true>): Promise<void> {
   if (new URL(page.url()).origin !== ORIGIN) throw new AwsSiteError("auth_required", "AWS sign-in is required.");
   const signIn = page.getByRole("button", { name: "Sign in", exact: true });
   for (const button of await signIn.all()) {
@@ -177,9 +186,30 @@ async function requireIdentity(page: Page, profile: SiteProfile, timeoutMs: numb
     const identity = await marker.evaluate(element => ({
       href: element.getAttribute("href"),
       accountArea: !!element.closest('header,[role="banner"],[role="menu"]'),
-      tag: element.tagName
+      tag: element.tagName,
+      label: element.textContent?.replace(/\s+/g, " ").trim()
     }));
-    if (identity.tag !== "A" || !identity.accountArea || !identity.href || canonicalProfileUrl(identity.href) !== canonicalProfileUrl(profile.accountProfileUrl)) {
+    if (identity.tag !== "A" || !identity.accountArea || !identity.href) {
+      throw new AwsSiteError("auth_required", "The signed-in AWS account does not match the recorded account identity.");
+    }
+    if (profile.identitySource === "self_profile") {
+      if (identity.label !== "Manage profile" || !isSelfProfileUrl(identity.href)) {
+        throw new AwsSiteError("auth_required", "The observed account control is not the signed-in AWS self profile.");
+      }
+      let ownProfile: string;
+      try {
+        if (verifySelfAccount) {
+          await verifySelfAccount();
+          ownProfile = canonicalProfileUrl(profile.accountProfileUrl);
+        } else ownProfile = await readSignedInSelfProfile(page.context(), timeoutMs);
+      }
+      catch (error) {
+        throw new AwsSiteError(error instanceof SelfProfileIdentityError || error instanceof OwnArticleActivityError ? error.code : "selector_unverified", "The signed-in AWS self-profile identity could not be confirmed. Reconnect your account.");
+      }
+      if (ownProfile !== canonicalProfileUrl(profile.accountProfileUrl)) {
+        throw new AwsSiteError("auth_required", "The signed-in AWS account does not match the recorded account identity.");
+      }
+    } else if (canonicalProfileUrl(identity.href) !== canonicalProfileUrl(profile.accountProfileUrl)) {
       throw new AwsSiteError("auth_required", "The signed-in AWS account does not match the recorded account identity.");
     }
   } finally {
@@ -261,28 +291,40 @@ export function createAwsSiteDriver(page: Page, profile: SiteProfile, options: A
   const maxCommentPages = options.maxCommentPages ?? 15;
   const maxDiscoveryPages = options.maxDiscoveryPages ?? 3;
   const ownProfile = canonicalProfileUrl(profile.accountProfileUrl);
+  const readiness = createAwsPageReadiness(page);
+  const activity = createOwnArticleActivity(page);
+  let observedCommentCount: number | undefined;
   function checkBudget() {
     if (options.deadline !== undefined && Date.now() >= options.deadline) {
       throw new AwsSiteError("state_unknown", "The browser inspection budget has expired.");
     }
   }
 
+  async function verifyIdentity() {
+    checkBudget();
+    await requireIdentity(page, profile, timeoutMs, false, () => activity.readAccount(ownProfile, Math.min(timeoutMs, options.deadline === undefined ? timeoutMs : Math.max(1, options.deadline - Date.now()))));
+    checkBudget();
+  }
+
   async function settlePage() {
     checkBudget();
     // The public SSR toolbar starts unpressed. Let client-side account/activity
     // requests settle before interpreting that state as the owner's own state.
-    try { await page.waitForLoadState("networkidle", { timeout: timeoutMs }); }
+    try { await readiness.wait(timeoutMs, options.deadline); }
     catch { throw new AwsSiteError("state_unknown", "AWS page requests have not settled; account activity cannot be read reliably."); }
     checkBudget();
   }
 
   async function navigate(url: string) {
     checkBudget();
+    readiness.begin({ accountOnly: new URL(url).pathname === "/", navigation: true, articleTruthRead: !!canonicalContentUrl(url) });
+    activity.begin();
+    observedCommentCount = undefined;
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: Math.min(timeoutMs * 2, 18000) });
     checkBudget();
     if (new URL(page.url()).origin !== ORIGIN) throw new AwsSiteError("auth_required", "AWS redirected to sign-in. Reconnect your session.");
     await settlePage();
-    await requireIdentity(page, profile, timeoutMs);
+    await verifyIdentity();
     checkBudget();
   }
 
@@ -299,25 +341,55 @@ export function createAwsSiteDriver(page: Page, profile: SiteProfile, options: A
       return {
         expected: match ? Number(match[1]) : null,
         comments,
-        busy: !!root.querySelector('[role="feed"][aria-busy="true"]'),
+        busy: !!root.querySelector('[role="status"][aria-label="Loading"][aria-busy="true"]'),
         loadMore: Array.from(root.querySelectorAll("button")).some(button => button.textContent?.trim() === "Load more")
       };
     });
   }
 
+  async function ownLikeState(): Promise<boolean> {
+    const rendered = await likeState(page, profile, timeoutMs);
+    const url = canonicalContentUrl(page.url());
+    if (!url) throw new AwsSiteError("state_unknown", "The current article cannot be verified.");
+    checkBudget();
+    try {
+      const state = await activity.readState(url, ownProfile, Math.min(timeoutMs, options.deadline === undefined ? timeoutMs : Math.max(1, options.deadline - Date.now())));
+      checkBudget();
+      observedCommentCount = state.commentsCount;
+      // Persisted true always skips a click. Persisted false also requires an
+      // unpressed toolbar, because AWS can retain its anonymous SSR state.
+      if (state.liked) return true;
+      if (rendered) throw new AwsSiteError("state_unknown", "The article toolbar disagrees with the current account's persisted like state.");
+      return false;
+    } catch (error) {
+      if (error instanceof AwsSiteError) throw error;
+      throw new AwsSiteError(error instanceof OwnArticleActivityError ? error.code : "state_unknown", "The current account's persisted article activity could not be verified.");
+    }
+  }
+
   async function readComments(verifyText?: string): Promise<{ commented: boolean; complete: boolean }> {
+    if (observedCommentCount === undefined) await ownLikeState();
     checkBudget();
     try { await page.locator("#comments h2").waitFor({ state: "visible", timeout: timeoutMs }); }
     catch { throw new AwsSiteError("state_unknown", "The article comment section cannot be read."); }
+    // AWS defers comment fetching until this section enters the viewport.
+    await page.locator("#comments h2").scrollIntoViewIfNeeded({ timeout: timeoutMs });
+    const commentFeed = page.locator('#comments [role="feed"]').first();
+    if (await commentFeed.count()) await commentFeed.scrollIntoViewIfNeeded({ timeout: timeoutMs });
     for (let index = 0; index <= maxCommentPages; index++) {
       checkBudget();
-      await page.waitForFunction(() => {
+      await page.waitForFunction(expected => {
         const root = document.querySelector("#comments");
-        return root && !root.querySelector('[role="feed"][aria-busy="true"]');
-      }, undefined, { timeout: timeoutMs }).catch(() => { throw new AwsSiteError("state_unknown", "Comment history is still loading."); });
+        if (!root || root.querySelector('[role="status"][aria-label="Loading"][aria-busy="true"]')) return false;
+        // AWS's feed aria-busy is !hasMore, so true means pagination exhausted.
+        // Actual loading has a status spinner. Verify current server coverage too.
+        const heading = /^Comments \((\d+)\)$/.exec(root.querySelector("h2")?.textContent?.trim() ?? "");
+        const more = Array.from(root.querySelectorAll("button")).some(button => button.textContent?.trim() === "Load more");
+        return heading && Number(heading[1]) === expected && (more || root.querySelectorAll('[class*="_comment-main_"]').length === expected);
+      }, observedCommentCount, { timeout: timeoutMs }).catch(() => { throw new AwsSiteError("state_unknown", "Comment history is still loading or differs from the current server count."); });
       const snapshot = await commentsSnapshot();
       checkBudget();
-      let invalid = snapshot.expected === null;
+      let invalid = snapshot.expected === null || snapshot.expected !== observedCommentCount;
       for (const comment of snapshot.comments) {
         const authors = new Set<string>();
         for (const raw of comment.authors) {
@@ -352,7 +424,7 @@ export function createAwsSiteDriver(page: Page, profile: SiteProfile, options: A
     if (!url) throw new AwsSiteError("state_unknown", "Only inspected Builder article URLs can be processed.");
     await navigate(url);
     await page.getByRole("heading", { level: 1 }).waitFor({ state: "visible", timeout: timeoutMs });
-    const liked = await likeState(page, profile, timeoutMs);
+    const liked = await ownLikeState();
     // An existing like already makes this candidate ineligible; no exhaustive comment scan is needed.
     if (liked) return { liked: true, commented: false, excerpt: "", commentsComplete: false };
     const comments = await readComments();
@@ -365,19 +437,21 @@ export function createAwsSiteDriver(page: Page, profile: SiteProfile, options: A
     if (before.liked) return "already_done";
     if (before.commented) throw new AwsSiteError("already_done", "You already commented on this post; it was skipped before liking.");
     if (!before.commentsComplete) throw new AwsSiteError("state_unknown", "Comment history is incomplete.");
-    await requireIdentity(page, profile, timeoutMs);
-    if (await likeState(page, profile, timeoutMs)) return "already_done";
+    await verifyIdentity();
+    if (await ownLikeState()) return "already_done";
+    if ((await readComments()).commented) throw new AwsSiteError("already_done", "You already commented on this post; it was skipped before liking.");
     const like = page.locator(profile.likeSelector).first();
     await options.beforeSubmit?.();
     try {
       await like.click({ timeout: timeoutMs });
       await page.waitForFunction(selector => {
-        const buttons = Array.from(document.querySelectorAll(selector));
-        return buttons.length > 0 && buttons.every(button => button.getAttribute("aria-pressed") === "true");
+        // AWS's top and bottom toolbars hold independent optimistic state.
+        // Confirm the clicked control, then verify persistence with a fresh API read.
+        return document.querySelector(selector)?.getAttribute("aria-pressed") === "true";
       }, profile.likeSelector, { timeout: timeoutMs });
       // A reload confirms server persistence; an optimistic pressed state alone is insufficient.
       await navigate(canonicalContentUrl(candidate.url)!);
-      if (!(await likeState(page, profile, timeoutMs))) throw new Error("like not persisted");
+      if (!(await ownLikeState())) throw new Error("like not persisted");
       return "verified";
     } catch {
       throw new AwsSiteError("action_uncertain", "A like was attempted but its persisted result could not be confirmed. It will not be clicked again automatically.");
@@ -391,8 +465,8 @@ export function createAwsSiteDriver(page: Page, profile: SiteProfile, options: A
     await navigate(url);
     const existing = await readComments();
     if (existing.commented) return "already_done";
-    if (!existing.complete || !(await likeState(page, profile, timeoutMs))) throw new AwsSiteError("state_unknown", "A persisted like and complete comment history are required before commenting.");
-    await requireIdentity(page, profile, timeoutMs);
+    if (!existing.complete || !(await ownLikeState())) throw new AwsSiteError("state_unknown", "A persisted like and complete comment history are required before commenting.");
+    await verifyIdentity();
     const editor = await uniqueVisible(page.locator(profile.commentEditorSelector), "comment editor", timeoutMs);
     await assertFingerprint(editor, profile.controls?.editor, "comment editor");
     await assertComposer(page, profile);
@@ -400,14 +474,15 @@ export function createAwsSiteDriver(page: Page, profile: SiteProfile, options: A
     if (normalized(currentText ?? "")) throw new AwsSiteError("state_unknown", "A comment draft already exists; automatic submission stopped.");
     await editor.fill(text, { timeout: timeoutMs });
     const submit = await uniqueVisible(page.locator(profile.commentSubmitSelector), "comment submit button", timeoutMs);
-    await requireIdentity(page, profile, timeoutMs);
+    await verifyIdentity();
     await assertFingerprint(submit, profile.controls?.submit, "comment submit button");
     await assertComposer(page, profile);
     if (!(await submit.isEnabled())) throw new AwsSiteError("state_unknown", "The recorded comment submit button is disabled.");
     // Filling an editor can take time. Check for an own comment arriving during
     // that interval before the submit boundary, without republishing a draft.
+    if (!(await ownLikeState())) throw new AwsSiteError("state_unknown", "The persisted like changed before commenting.");
     if ((await readComments()).commented) return "already_done";
-    await requireIdentity(page, profile, timeoutMs);
+    await verifyIdentity();
     await assertFingerprint(submit, profile.controls?.submit, "comment submit button");
     await assertComposer(page, profile);
     if (!(await submit.isEnabled())) throw new AwsSiteError("state_unknown", "The comment submit button became disabled.");
@@ -430,9 +505,12 @@ export function createAwsSiteDriver(page: Page, profile: SiteProfile, options: A
   return {
     async checkAuthentication() {
       checkBudget();
-      if (page.url() === "about:blank") await page.goto(ORIGIN, { waitUntil: "domcontentloaded", timeout: Math.min(timeoutMs * 2, 18000) });
-      await settlePage();
-      await requireIdentity(page, profile, timeoutMs);
+      if (page.url() !== "about:blank" && new URL(page.url()).origin !== ORIGIN) {
+        throw new AwsSiteError("auth_required", "AWS sign-in is required.");
+      }
+      // Reload existing AWS documents too: readiness must observe this load,
+      // rather than trusting activity rendered before the driver was created.
+      await navigate(page.url() === "about:blank" ? ORIGIN : page.url());
       return true;
     },
     async discoverCandidates(limit) {
@@ -440,10 +518,13 @@ export function createAwsSiteDriver(page: Page, profile: SiteProfile, options: A
       await navigate(ORIGIN);
       const latest = page.locator('main button[data-testid="latest"]');
       const hasLatest = await latest.count() === 1;
-      if (hasLatest) {
+      if (hasLatest && options.feedMode !== "home") {
         const tab = await latest.evaluate(element => ({ text: element.textContent?.trim(), pressed: element.getAttribute("aria-pressed") }));
         if (tab.text !== "Latest" || !["false", "true"].includes(tab.pressed ?? "")) throw new AwsSiteError("state_unknown", "The observed Latest feed control changed.");
-        if (tab.pressed !== "true") await latest.click();
+        if (tab.pressed !== "true") {
+          readiness.begin();
+          await latest.click();
+        }
         await page.waitForFunction(() => document.querySelector('main button[data-testid="latest"]')?.getAttribute("aria-pressed") === "true", undefined, { timeout: timeoutMs });
         // Feed fetching can begin after the tab transition. Wait for actual
         // article links rather than allowing Spotlight to mask an empty feed.
@@ -452,6 +533,11 @@ export function createAwsSiteDriver(page: Page, profile: SiteProfile, options: A
       }
       const feeds = page.locator('main [role="feed"]').filter({ has: page.locator('a[href^="/content/"]') });
       const scope = await feeds.count() === 1 ? feeds : page.locator("main");
+      if (options.feedMode === "home") {
+        const feed = page.locator('main [role="feed"]').first();
+        if (await feed.count()) await feed.scrollIntoViewIfNeeded({ timeout: timeoutMs });
+        else if (hasLatest) await latest.scrollIntoViewIfNeeded({ timeout: timeoutMs });
+      }
       await scope.locator('a[href^="/content/"]').first().waitFor({ state: "visible", timeout: timeoutMs });
       const found = new Map<string, AwsCandidate>();
       for (let index = 0; index < maxDiscoveryPages; index++) {

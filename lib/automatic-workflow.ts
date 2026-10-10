@@ -49,7 +49,7 @@ export async function executeAutomaticRun(input: { localDate: string; scheduledA
     browser = await launchAwsBrowser({ session });
     const page = await browser.context.newPage();
     const driver = createAwsSiteDriver(page, session.profile, {
-      timeoutMs: 8000, maxDiscoveryPages: 2, maxCommentPages: 5, deadline,
+      feedMode: "home", maxDiscoveryPages: 2, maxCommentPages: 5, deadline,
       beforeSubmit: async () => {
         checkTime();
         if ((activeAction !== "like" && activeAction !== "comment") || !await assertAutomationActionReady(id, token, activeAction)) {

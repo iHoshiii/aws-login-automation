@@ -13,7 +13,9 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "aws:connect": "tsx scripts/aws-connect.ts",
-    "aws:probe": "tsx scripts/aws-probe.ts"
+    "aws:probe": "tsx scripts/aws-probe.ts",
+    "aws:daily": "tsx scripts/aws-daily.ts",
+    "aws:schedule": "powershell.exe -NoProfile -File scripts/install-aws-daily.ps1"
   },
   "engines": {
     "node": "^22.17.0 || >=24.0.0"
