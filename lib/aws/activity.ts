@@ -72,19 +72,10 @@ export function createOwnArticleActivity(page: Page) {
     void task.finally(() => collecting.delete(task));
   });
 
-  return {
-    begin() {
-      generation++;
-      headers = undefined;
-      collecting.clear();
-    },
-    async read(articleUrl: string, expectedAccountProfileUrl: string, timeoutMs: number): Promise<boolean> {
-      return (await this.readState(articleUrl, expectedAccountProfileUrl, timeoutMs)).liked;
-    },
-    async readState(articleUrl: string, expectedAccountProfileUrl: string, timeoutMs: number): Promise<OwnArticleActivityState> {
-      const articleId = contentId(articleUrl);
+  const rpc = {
+    async perform(expectedAccountProfileUrl: string, timeoutMs: number, articleId?: string): Promise<OwnArticleActivityState | true> {
       const expectedAlias = accountAlias(expectedAccountProfileUrl);
-      if (!articleId || !expectedAlias || !Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 60000) {
+      if (!expectedAlias || !Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 60000) {
         throw new OwnArticleActivityError("state_unknown");
       }
       const readGeneration = generation;
@@ -100,7 +91,7 @@ export function createOwnArticleActivity(page: Page) {
       }
       const remaining = deadline - Date.now();
       if (remaining < 1) throw new OwnArticleActivityError("state_unknown");
-      let result: { code: "auth_required" | "state_unknown" } | OwnArticleActivityState;
+      let result: { code: "auth_required" | "state_unknown" } | OwnArticleActivityState | { account: true };
       try {
         result = await page.evaluate(async input => {
           if (location.origin !== input.origin) return { code: "auth_required" as const };
@@ -125,6 +116,7 @@ export function createOwnArticleActivity(page: Page) {
               return { code: "auth_required" as const };
             }
             verifiedAccount = true;
+            if (input.articleId === undefined) return { account: true as const };
             const endpoint = new URL(`${input.apiOrigin}/cs/v2/articles`);
             endpoint.searchParams.set("articleId", input.articleId);
             const response = await fetch(endpoint, {
@@ -163,6 +155,29 @@ export function createOwnArticleActivity(page: Page) {
       } catch { throw new OwnArticleActivityError("state_unknown"); }
       if (generation !== readGeneration || Date.now() > deadline) throw new OwnArticleActivityError("state_unknown");
       if ("code" in result) throw new OwnArticleActivityError(result.code);
+      return "account" in result ? true : result;
+    }
+  };
+
+  return {
+    begin() {
+      generation++;
+      headers = undefined;
+      collecting.clear();
+    },
+    async readAccount(expectedAccountProfileUrl: string, timeoutMs: number): Promise<true> {
+      const result = await rpc.perform(expectedAccountProfileUrl, timeoutMs);
+      if (result !== true) throw new OwnArticleActivityError("state_unknown");
+      return true;
+    },
+    async read(articleUrl: string, expectedAccountProfileUrl: string, timeoutMs: number): Promise<boolean> {
+      return (await this.readState(articleUrl, expectedAccountProfileUrl, timeoutMs)).liked;
+    },
+    async readState(articleUrl: string, expectedAccountProfileUrl: string, timeoutMs: number): Promise<OwnArticleActivityState> {
+      const articleId = contentId(articleUrl);
+      if (!articleId) throw new OwnArticleActivityError("state_unknown");
+      const result = await rpc.perform(expectedAccountProfileUrl, timeoutMs, articleId);
+      if (result === true) throw new OwnArticleActivityError("state_unknown");
       return result;
     }
   };

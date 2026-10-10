@@ -252,12 +252,15 @@ describe("Builder site adapter against isolated browser fixtures", () => {
     await expect(captureSiteProfile(page, { accountProfileUrl: own, accountSelector: `main a[href="${own}"]`, commentEditorSelector: "#comment-editor", commentSubmitSelector: "#comment-submit" })).rejects.toMatchObject({ code: "auth_required" });
   });
 
-  it("captures and verifies the observed Manage profile menu using its own QR alias", async () => {
+  it("captures the observed Manage profile QR alias and verifies runtime identity with a fresh account response", async () => {
     const { driver, profile, state, page } = await setup({ identitySource: "self_profile" });
     expect(profile.identitySource).toBe("self_profile");
     expect(profile.accountProfileUrl).toBe(own);
+    let profilePageRequests = 0;
+    await page.route(`${origin}/profile**`, route => { profilePageRequests++; return route.abort(); });
     expect(await driver.checkAuthentication()).toBe(true);
     expect(await driver.inspectCandidate(candidate)).toMatchObject({ liked: false, commented: false, commentsComplete: true });
+    expect(profilePageRequests).toBe(0);
     expect(page.context().pages()).toEqual([page]);
     expect(state.likeAttempts).toBe(0);
     expect(state.commentAttempts).toBe(0);

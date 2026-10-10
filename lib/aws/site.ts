@@ -163,7 +163,7 @@ async function uniqueVisible(locator: Locator, name: string, timeoutMs: number):
   }
 }
 
-async function requireIdentity(page: Page, profile: SiteProfile, timeoutMs: number, capturing = false): Promise<void> {
+async function requireIdentity(page: Page, profile: SiteProfile, timeoutMs: number, capturing = false, verifySelfAccount?: () => Promise<true>): Promise<void> {
   if (new URL(page.url()).origin !== ORIGIN) throw new AwsSiteError("auth_required", "AWS sign-in is required.");
   const signIn = page.getByRole("button", { name: "Sign in", exact: true });
   for (const button of await signIn.all()) {
@@ -195,9 +195,14 @@ async function requireIdentity(page: Page, profile: SiteProfile, timeoutMs: numb
         throw new AwsSiteError("auth_required", "The observed account control is not the signed-in AWS self profile.");
       }
       let ownProfile: string;
-      try { ownProfile = await readSignedInSelfProfile(page.context(), timeoutMs); }
+      try {
+        if (verifySelfAccount) {
+          await verifySelfAccount();
+          ownProfile = canonicalProfileUrl(profile.accountProfileUrl);
+        } else ownProfile = await readSignedInSelfProfile(page.context(), timeoutMs);
+      }
       catch (error) {
-        throw new AwsSiteError(error instanceof SelfProfileIdentityError ? error.code : "selector_unverified", "The signed-in AWS self-profile identity could not be confirmed. Reconnect your account.");
+        throw new AwsSiteError(error instanceof SelfProfileIdentityError || error instanceof OwnArticleActivityError ? error.code : "selector_unverified", "The signed-in AWS self-profile identity could not be confirmed. Reconnect your account.");
       }
       if (ownProfile !== canonicalProfileUrl(profile.accountProfileUrl)) {
         throw new AwsSiteError("auth_required", "The signed-in AWS account does not match the recorded account identity.");
@@ -293,6 +298,12 @@ export function createAwsSiteDriver(page: Page, profile: SiteProfile, options: A
     }
   }
 
+  async function verifyIdentity() {
+    checkBudget();
+    await requireIdentity(page, profile, timeoutMs, false, () => activity.readAccount(ownProfile, Math.min(timeoutMs, options.deadline === undefined ? timeoutMs : Math.max(1, options.deadline - Date.now()))));
+    checkBudget();
+  }
+
   async function settlePage() {
     checkBudget();
     // The public SSR toolbar starts unpressed. Let client-side account/activity
@@ -311,7 +322,7 @@ export function createAwsSiteDriver(page: Page, profile: SiteProfile, options: A
     checkBudget();
     if (new URL(page.url()).origin !== ORIGIN) throw new AwsSiteError("auth_required", "AWS redirected to sign-in. Reconnect your session.");
     await settlePage();
-    await requireIdentity(page, profile, timeoutMs);
+    await verifyIdentity();
     checkBudget();
   }
 
@@ -424,7 +435,7 @@ export function createAwsSiteDriver(page: Page, profile: SiteProfile, options: A
     if (before.liked) return "already_done";
     if (before.commented) throw new AwsSiteError("already_done", "You already commented on this post; it was skipped before liking.");
     if (!before.commentsComplete) throw new AwsSiteError("state_unknown", "Comment history is incomplete.");
-    await requireIdentity(page, profile, timeoutMs);
+    await verifyIdentity();
     if (await ownLikeState()) return "already_done";
     if ((await readComments()).commented) throw new AwsSiteError("already_done", "You already commented on this post; it was skipped before liking.");
     const like = page.locator(profile.likeSelector).first();
@@ -453,7 +464,7 @@ export function createAwsSiteDriver(page: Page, profile: SiteProfile, options: A
     const existing = await readComments();
     if (existing.commented) return "already_done";
     if (!existing.complete || !(await ownLikeState())) throw new AwsSiteError("state_unknown", "A persisted like and complete comment history are required before commenting.");
-    await requireIdentity(page, profile, timeoutMs);
+    await verifyIdentity();
     const editor = await uniqueVisible(page.locator(profile.commentEditorSelector), "comment editor", timeoutMs);
     await assertFingerprint(editor, profile.controls?.editor, "comment editor");
     await assertComposer(page, profile);
@@ -461,7 +472,7 @@ export function createAwsSiteDriver(page: Page, profile: SiteProfile, options: A
     if (normalized(currentText ?? "")) throw new AwsSiteError("state_unknown", "A comment draft already exists; automatic submission stopped.");
     await editor.fill(text, { timeout: timeoutMs });
     const submit = await uniqueVisible(page.locator(profile.commentSubmitSelector), "comment submit button", timeoutMs);
-    await requireIdentity(page, profile, timeoutMs);
+    await verifyIdentity();
     await assertFingerprint(submit, profile.controls?.submit, "comment submit button");
     await assertComposer(page, profile);
     if (!(await submit.isEnabled())) throw new AwsSiteError("state_unknown", "The recorded comment submit button is disabled.");
@@ -469,7 +480,7 @@ export function createAwsSiteDriver(page: Page, profile: SiteProfile, options: A
     // that interval before the submit boundary, without republishing a draft.
     if (!(await ownLikeState())) throw new AwsSiteError("state_unknown", "The persisted like changed before commenting.");
     if ((await readComments()).commented) return "already_done";
-    await requireIdentity(page, profile, timeoutMs);
+    await verifyIdentity();
     await assertFingerprint(submit, profile.controls?.submit, "comment submit button");
     await assertComposer(page, profile);
     if (!(await submit.isEnabled())) throw new AwsSiteError("state_unknown", "The comment submit button became disabled.");

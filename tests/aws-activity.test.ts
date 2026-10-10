@@ -99,6 +99,26 @@ describe("fresh authenticated own article activity", () => {
     expect(await activity.readState(articleUrl, profileUrl, 3000)).toEqual({ liked: true, commentsCount: 12 });
   });
 
+  it("verifies the expected account with a fresh profile read and no article query", async () => {
+    const { activity, reads } = await setup();
+    expect(await activity.readAccount(profileUrl, 3000)).toBe(true);
+    expect(reads.map(read => new URL(read.url).pathname)).toEqual(["/ums/profile/get"]);
+    expect(reads[0].method).toBe("POST");
+    expect(reads[0].body).toBe("{}");
+  });
+
+  it("rejects an expired session during an account-only read", async () => {
+    const { activity, reads } = await setup({ profileStatus: 403 });
+    await expect(activity.readAccount(profileUrl, 3000)).rejects.toMatchObject({ code: "auth_required" });
+    expect(reads).toHaveLength(1);
+  });
+
+  it("rejects an account-only read whose current alias differs from the captured owner", async () => {
+    const { activity, reads } = await setup({ profile: { profile: { basicInfo: { ...ownProfile.profile.basicInfo, alias: "other-owner" } } } });
+    await expect(activity.readAccount(profileUrl, 3000)).rejects.toMatchObject({ code: "auth_required" });
+    expect(reads.map(read => new URL(read.url).pathname)).toEqual(["/ums/profile/get"]);
+  });
+
   it("requires fresh own-profile alias evidence before reading article state", async () => {
     const { activity, reads } = await setup({ profile: { profile: { basicInfo: { ...ownProfile.profile.basicInfo, alias: "other-owner" } } } });
     await expect(activity.read(articleUrl, profileUrl, 3000)).rejects.toMatchObject({ code: "auth_required" });
