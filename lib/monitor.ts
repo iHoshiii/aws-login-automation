@@ -6,6 +6,8 @@ import type { MonitorActionStatus, MonitorData, MonitorStatus } from "./monitor-
 
 /** Local daily journals written by `npm run aws:daily`; the only source read on dev. */
 const JOURNAL_DIRECTORY = ".local/aws-daily";
+/** Optional complete-streak snapshot (all six badges) written by the daily check. */
+const OBSERVATION_CACHE = ".local/activity.json";
 const RECENT_LIMIT = 14;
 
 type DailyStatus = "running" | "verified" | "auth_required" | "no_post" | "failed" | "uncertain";
@@ -77,6 +79,22 @@ function visitStatus(run: Journal | null): MonitorActionStatus {
   return "attention";
 }
 
+/** The complete six-streak snapshot written by `npm run aws:daily -- --check`; preferred over partial journals. */
+async function readObservationCache(path: string): Promise<ActivitySummary | null> {
+  try {
+    if ((await stat(path)).size > 128_000) return null;
+    const value: unknown = JSON.parse(await readFile(path, "utf8"));
+    if (!value || typeof value !== "object" || (value as Record<string, unknown>).version !== 1) return null;
+    return parseActivity((value as Record<string, unknown>).activity);
+  } catch { return null; }
+}
+
+function newerActivity(a: ActivitySummary | null, b: ActivitySummary | null): ActivitySummary | null {
+  if (!a) return b;
+  if (!b) return a;
+  return Date.parse(a.observedAt) >= Date.parse(b.observedAt) ? a : b;
+}
+
 /** Always resolves; an unreadable workspace yields an "unavailable" monitor rather than throwing. */
 export async function buildMonitorData(now: Date): Promise<MonitorData> {
   const base = { today: manilaDate(now), checkedAt: now.toISOString(), nextScheduledAt: nextScheduledTime(now).toISOString() };
@@ -87,25 +105,27 @@ export async function buildMonitorData(now: Date): Promise<MonitorData> {
     recent: []
   };
 
-  const directory = resolve(process.cwd(), JOURNAL_DIRECTORY);
-  let dates: string[];
+  const cwd = process.cwd();
+  const cached = await readObservationCache(resolve(cwd, OBSERVATION_CACHE));
+
+  const runs: Journal[] = [];
   try {
-    dates = (await readdir(directory))
+    const directory = resolve(cwd, JOURNAL_DIRECTORY);
+    const dates = (await readdir(directory))
       .filter(name => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))
       .map(name => name.slice(0, -5))
       .sort((a, b) => b.localeCompare(a))
       .slice(0, RECENT_LIMIT);
-  } catch { return unavailable; }
+    for (const date of dates) {
+      const run = await readJournal(directory, date);
+      if (run) runs.push(run);
+    }
+  } catch { /* No journals yet; a cached observation may still provide progress. */ }
 
-  const runs: Journal[] = [];
-  for (const date of dates) {
-    const run = await readJournal(directory, date);
-    if (run) runs.push(run);
-  }
-  if (!runs.length) return unavailable;
+  const observed = newerActivity(cached, runs.find(run => run.activity)?.activity ?? null);
+  if (!runs.length && !observed) return unavailable;
 
   const today = runs.find(run => run.date === base.today) ?? null;
-  const observed = runs.find(run => run.activity)?.activity ?? null;
   return {
     ...base,
     source: "local",

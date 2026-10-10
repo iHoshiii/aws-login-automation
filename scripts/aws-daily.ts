@@ -9,6 +9,7 @@ import { createAwsSiteDriver, AwsSiteError } from "../lib/aws/site";
 import { composeRelevantComment } from "../lib/aws/comment";
 import { readAwsStreaks, AwsStreakReadError } from "../lib/aws/streaks";
 import { executeLocalDaily, localDailyDate, readLocalDailyRun } from "../lib/aws/local-daily";
+import { localMonitorBinding, writeLocalMonitorObservation } from "../lib/monitor-cache";
 
 const workspace = fileURLToPath(new URL("../", import.meta.url));
 process.chdir(workspace);
@@ -66,6 +67,11 @@ try {
     browser = await launchAwsBrowser({ session: connected });
     const activity = await readAwsStreaks(browser.context, connected.profile.accountProfileUrl);
     console.log(JSON.stringify({ readOnly: true, account: "verified", activity }, null, 2));
+    if (sessionKey) {
+      // Persist the full six-streak snapshot so the dashboard monitor can show 30- and 90-day progress.
+      try { await writeLocalMonitorObservation(resolve(workspace, ".local"), activity, localMonitorBinding(connected.profile.accountProfileUrl, sessionKey)); }
+      catch { console.error(JSON.stringify({ status: "monitor_cache_write_failed" })); }
+    }
     await refreshLocalSession();
   } else {
     const deadline = Date.now() + 10 * 60_000;
