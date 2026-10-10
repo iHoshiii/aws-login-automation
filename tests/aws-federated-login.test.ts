@@ -48,8 +48,8 @@ describe("federation assistance with isolated synthetic browser pages", () => {
     expect(actions).toEqual([{ action: "github", value: undefined, url: githubUrl }]);
   });
 
-  it("fills only the observed Google identifier and clicks Next once", async () => {
-    const { context, page, actions } = await setup(`<label for="email">Email or phone</label><input id="email" type="text" autocomplete="username"><input type="password"><button onclick="window.recordAction('next',document.querySelector('#email').value,location.href).then(()=>location.assign('${builderUrl}'))">Next</button>`, googleUrl);
+  it.each(["text", "email"])("fills only the observed Google identifier and clicks Next once (type=%s)", async type => {
+    const { context, page, actions } = await setup(`<label for="email">Email or phone</label><input id="email" type="${type}" autocomplete="username"><input type="password"><button onclick="window.recordAction('next',document.querySelector('#email').value,location.href).then(()=>location.assign('${builderUrl}'))">Next</button>`, googleUrl);
     expect((await assistFederatedLogin(context, options(page))).state).toBe("login_returned");
     expect(actions).toEqual([{ action: "next", value: email, url: googleUrl }]);
   });

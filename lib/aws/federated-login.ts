@@ -213,7 +213,7 @@ export async function assistFederatedLogin(context: BrowserContext, options: Fed
             const next = await visibleUnique(page.getByRole("button", { name: "Next", exact: true }));
             if (field && next) {
               const actual = await field.evaluate(element => ({ tag: element.tagName, type: element.getAttribute("type"), autocomplete: element.getAttribute("autocomplete") }));
-              if (actual.tag === "INPUT" && actual.type === "text" && actual.autocomplete === "username" && address(page)?.origin === GOOGLE) {
+              if (actual.tag === "INPUT" && (actual.type === "text" || actual.type === "email") && actual.autocomplete === "username" && address(page)?.origin === GOOGLE) {
                 markAction(activeFlow, page, "google_identifier");
                 progressed = true;
                 await field.fill(email, { timeout: Math.max(1,Math.min(3000,deadline-Date.now())) });
