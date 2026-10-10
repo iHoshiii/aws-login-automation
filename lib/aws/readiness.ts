@@ -15,15 +15,15 @@ function isBackgroundRequest(request: Request): boolean {
 function optionalHomeCancellation(request: Request): boolean {
   const url = new URL(request.url());
   if (url.origin !== "https://api.builder.aws.com") return false;
-  return (request.method() === "GET" && ["/cs/role", "/cs/v2/feed/articles", "/cs/v2/feed/polls", "/cs/v2/users/me/articles/bookmarks"].includes(url.pathname)) ||
-    (request.method() === "POST" && ["/ums/profiles/aliases", "/ums/batchDoesFollowUser", "/ums/doesFollowUser"].includes(url.pathname));
+  return (request.method() === "GET" && ["/cs/role", "/cs/v2/feed/articles", "/cs/v2/feed/polls", "/cs/v2/users/me/articles/bookmarks", "/cs/getRecommendedTags"].includes(url.pathname)) ||
+    (request.method() === "POST" && ["/ums/profiles/aliases", "/ums/batchDoesFollowUser", "/ums/doesFollowUser", "/ums/language/get"].includes(url.pathname));
 }
 
 function cachedArticleCancellation(request: Request): boolean {
   const url = new URL(request.url());
   if (url.origin !== "https://api.builder.aws.com") return false;
   return (request.method() === "GET" && ["/cs/role", "/cs/v2/comments/public", "/cs/v2/users/me/articles/bookmarks"].includes(url.pathname)) ||
-    (request.method() === "POST" && ["/ums/profile/get", "/cs/content/view", "/ums/profiles/aliases", "/ums/batchDoesFollowUser", "/ums/doesFollowUser"].includes(url.pathname));
+    (request.method() === "POST" && ["/ums/profile/get", "/cs/content/view", "/ums/profiles/aliases", "/ums/batchDoesFollowUser", "/ums/doesFollowUser", "/ums/language/get"].includes(url.pathname));
 }
 
 /** Install before navigation so the SSR toolbar cannot be mistaken for hydrated activity. */

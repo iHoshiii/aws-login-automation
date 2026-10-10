@@ -10,7 +10,7 @@ try {
   const { browser, context } = await launchAwsBrowser({ session });
   try {
     const page = await context.newPage();
-    const driver = createAwsSiteDriver(page, session.profile, { timeoutMs: 8000, maxDiscoveryPages: 2, maxCommentPages: 5 });
+    const driver = createAwsSiteDriver(page, session.profile, { feedMode: "home", maxDiscoveryPages: 2, maxCommentPages: 5 });
     await driver.checkAuthentication();
     console.log("Recorded account identity observed. Probe is read-only; no likes/comments will be submitted.");
     const candidates = await driver.discoverCandidates(6);
@@ -24,7 +24,8 @@ try {
     }
     console.log("Probe finished. No database records, likes or comments were submitted; AWS pages were visited.");
   } finally { await browser.close(); }
-} catch {
-  console.error("Probe failed. Reconnect if the session expired; inspect the selected controls if the layout changed. No engagement was submitted.");
+} catch (error) {
+  const reason = error instanceof AwsSiteError ? `${error.code}: ${error.message}` : "The browser or saved session could not be loaded.";
+  console.error(`Probe failed. ${reason} No engagement was submitted.`);
   process.exitCode = 1;
 }

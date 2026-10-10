@@ -12,10 +12,11 @@ const escapeHtml = (value: string) => value.replaceAll("&", "&amp;").replaceAll(
 // authenticated composer and identity are synthetic; no real AWS request is made.
 async function fixture(browser: Browser, options: { liked?: boolean; comments?: Comment[]; pageSize?: number; persistLike?: boolean; persistComment?: boolean; auth?: boolean; identitySource?: "self_profile"; recommendations?: boolean; backgroundRequests?: boolean; ssrUnliked?: boolean; hiddenOwnComment?: boolean; independentToolbars?: boolean; lazyComments?: boolean; activity?: "delayed" | "hanging" | "failed" | "aborted" | "http_failed" } = {}) {
   const page = options.identitySource ? await (await browser.newContext()).newPage() : await browser.newPage();
-  const state = { liked: options.liked ?? false, comments: options.comments ?? [], likeAttempts: 0, commentAttempts: 0, recommendationAttempts: 0, selfAlias: "fixture-account" };
+  const state = { liked: options.liked ?? false, comments: options.comments ?? [], likeAttempts: 0, commentAttempts: 0, recommendationAttempts: 0, latestAttempts: 0, selfAlias: "fixture-account" };
   const pageSize = options.pageSize ?? 10;
   const markup = (comment: Comment) => `<div class="_comment-main_recorded"><div data-module-id="profile"><a href="${escapeHtml(comment.author)}">Author</a></div><div class="_comment-content_recorded"><div class="_editor-container_recorded">${escapeHtml(comment.text)}</div><button aria-label="Reply ${comment.replies ?? 0}">${comment.replies ?? 0}</button></div></div>`;
   await page.exposeFunction("fixtureLike", () => { state.likeAttempts++; if (options.persistLike !== false) state.liked = true; });
+  await page.exposeFunction("fixtureLatest", () => { state.latestAttempts++; });
   await page.exposeFunction("fixtureComment", (text: string) => { state.commentAttempts++; if (options.persistComment !== false) state.comments.unshift({ author: own, text }); });
   await page.exposeFunction("fixtureRecommendation", () => { state.recommendationAttempts++; });
   const routeTarget = options.identitySource ? page.context() : page;
@@ -62,7 +63,7 @@ async function fixture(browser: Browser, options: { liked?: boolean; comments?: 
       document.addEventListener('keydown',event=>{if(event.key==='Escape'){const menu=document.querySelector('[role=menu]');if(menu)menu.hidden=true;}});
       const comments=${JSON.stringify(comments)};let shown=${pageSize};
       ${options.lazyComments ? `const observer=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting)){document.querySelector('#comment-list').innerHTML=comments.slice(0,${pageSize}).join('');document.querySelector('#comments-loading').remove();observer.disconnect();}});observer.observe(document.querySelector('#comments [role="feed"]'));` : ""}
-      document.querySelector('button[data-testid=latest]')?.addEventListener('click',event=>event.target.setAttribute('aria-pressed','true'));
+      document.querySelector('button[data-testid=latest]')?.addEventListener('click',event=>{event.target.setAttribute('aria-pressed','true');window.fixtureLatest();});
       document.querySelector('#more-comments')?.addEventListener('click',event=>{
         document.querySelector('#comment-list').insertAdjacentHTML('beforeend',comments.slice(shown,shown+${pageSize}).join(''));shown+=${pageSize};if(shown>=comments.length)event.target.remove();
       });
@@ -111,6 +112,15 @@ describe("Builder site adapter against isolated browser fixtures", () => {
     const { driver, state } = await setup();
     expect(await driver.discoverCandidates(10)).toEqual([candidate]);
     expect(await driver.inspectCandidate(candidate)).toMatchObject({ liked: false, commented: false, commentsComplete: true });
+    expect(state.likeAttempts).toBe(0);
+    expect(state.commentAttempts).toBe(0);
+  });
+
+  it("uses the Home feed without switching to Latest or selecting Spotlight", async () => {
+    const { page, profile, state } = await setup();
+    const homeDriver = createAwsSiteDriver(page, profile, { feedMode: "home", timeoutMs: 4000 });
+    expect(await homeDriver.discoverCandidates(1)).toEqual([candidate]);
+    expect(state.latestAttempts).toBe(0);
     expect(state.likeAttempts).toBe(0);
     expect(state.commentAttempts).toBe(0);
   });

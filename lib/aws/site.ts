@@ -69,6 +69,8 @@ export interface AwsSiteDriver {
 }
 
 export interface AwsSiteOptions {
+  /** The daily local runner uses the Home feed shown to the signed-in owner. */
+  feedMode?: "home" | "latest";
   maxCommentPages?: number;
   maxDiscoveryPages?: number;
   timeoutMs?: number;
@@ -516,7 +518,7 @@ export function createAwsSiteDriver(page: Page, profile: SiteProfile, options: A
       await navigate(ORIGIN);
       const latest = page.locator('main button[data-testid="latest"]');
       const hasLatest = await latest.count() === 1;
-      if (hasLatest) {
+      if (hasLatest && options.feedMode !== "home") {
         const tab = await latest.evaluate(element => ({ text: element.textContent?.trim(), pressed: element.getAttribute("aria-pressed") }));
         if (tab.text !== "Latest" || !["false", "true"].includes(tab.pressed ?? "")) throw new AwsSiteError("state_unknown", "The observed Latest feed control changed.");
         if (tab.pressed !== "true") {
@@ -531,6 +533,11 @@ export function createAwsSiteDriver(page: Page, profile: SiteProfile, options: A
       }
       const feeds = page.locator('main [role="feed"]').filter({ has: page.locator('a[href^="/content/"]') });
       const scope = await feeds.count() === 1 ? feeds : page.locator("main");
+      if (options.feedMode === "home") {
+        const feed = page.locator('main [role="feed"]').first();
+        if (await feed.count()) await feed.scrollIntoViewIfNeeded({ timeout: timeoutMs });
+        else if (hasLatest) await latest.scrollIntoViewIfNeeded({ timeout: timeoutMs });
+      }
       await scope.locator('a[href^="/content/"]').first().waitFor({ state: "visible", timeout: timeoutMs });
       const found = new Map<string, AwsCandidate>();
       for (let index = 0; index < maxDiscoveryPages; index++) {

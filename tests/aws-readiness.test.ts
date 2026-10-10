@@ -94,9 +94,11 @@ describe("AWS application request readiness", () => {
     ["GET", "/cs/v2/feed/articles"],
     ["GET", "/cs/v2/feed/polls"],
     ["GET", "/cs/v2/users/me/articles/bookmarks"],
+    ["GET", "/cs/getRecommendedTags"],
     ["POST", "/ums/profiles/aliases"],
     ["POST", "/ums/batchDoesFollowUser"],
-    ["POST", "/ums/doesFollowUser"]
+    ["POST", "/ums/doesFollowUser"],
+    ["POST", "/ums/language/get"]
   ])("permits the observed %s %s cancellation during account-only home hydration", async (method, path) => {
     const { events, readiness } = fixture();
     readiness.begin({ accountOnly: true });
@@ -109,7 +111,9 @@ describe("AWS application request readiness", () => {
   it.each([
     [articleUrl, "GET"],
     ["https://api.builder.aws.com/cs/v2/feed/articles", "POST"],
-    ["https://builder.aws.com/cs/v2/feed/articles", "GET"]
+    ["https://builder.aws.com/cs/v2/feed/articles", "GET"],
+    ["https://api.builder.aws.com/ums/language/get", "GET"],
+    ["https://api.builder.aws.com/cs/getRecommendedTags", "POST"]
   ])("rejects an unrecognized account-only cancellation: %s %s", async (url, method) => {
     const { events, readiness } = fixture();
     readiness.begin({ accountOnly: true });
@@ -123,6 +127,18 @@ describe("AWS application request readiness", () => {
     const { events, readiness } = fixture();
     readiness.begin();
     cancel(events, request("https://api.builder.aws.com/cs/v2/feed/articles"));
+    const rejected = expect(readiness.wait(650)).rejects.toThrow("AWS application requests did not settle.");
+    await vi.advanceTimersByTimeAsync(650);
+    await rejected;
+  });
+
+  it.each([
+    { name: "Latest feed", options: {} },
+    { name: "article", options: { articleTruthRead: true } }
+  ])("keeps cancelled topic suggestions strict in $name scope", async ({ options }) => {
+    const { events, readiness } = fixture();
+    readiness.begin(options);
+    cancel(events, request("https://api.builder.aws.com/cs/getRecommendedTags"));
     const rejected = expect(readiness.wait(650)).rejects.toThrow("AWS application requests did not settle.");
     await vi.advanceTimersByTimeAsync(650);
     await rejected;
@@ -165,7 +181,8 @@ describe("AWS application request readiness", () => {
 
   it.each([
     ["GET", "/cs/v2/comments/public?articleId=%2Fcontent%2FFixtureArticle1"],
-    ["POST", "/ums/profile/get"]
+    ["POST", "/ums/profile/get"],
+    ["POST", "/ums/language/get"]
   ])("allows an observed %s %s cache cancellation only when a fresh article truth read is required", async (method, path) => {
     const { events, readiness } = fixture();
     readiness.begin({ articleTruthRead: true });
@@ -179,6 +196,15 @@ describe("AWS application request readiness", () => {
     const { events, readiness } = fixture();
     readiness.begin({ articleTruthRead: true });
     cancel(events, request(articleUrl));
+    const rejected = expect(readiness.wait(650)).rejects.toThrow("AWS application requests did not settle.");
+    await vi.advanceTimersByTimeAsync(650);
+    await rejected;
+  });
+
+  it("keeps language preference cancellation strict without an account-only or article-truth scope", async () => {
+    const { events, readiness } = fixture();
+    readiness.begin();
+    cancel(events, request("https://api.builder.aws.com/ums/language/get", "POST"));
     const rejected = expect(readiness.wait(650)).rejects.toThrow("AWS application requests did not settle.");
     await vi.advanceTimersByTimeAsync(650);
     await rejected;
