@@ -4,7 +4,7 @@ import { readAwsStreaks, AwsStreakReadError } from "@/lib/aws/streaks";
 
 const origin = "https://builder.aws.com";
 const expectedProfile = `${origin}/community/@fixture-owner`;
-const titles = ["30-Day Visit Streak", "30-Day Like Streak", "30-Day Comment Streak", "90-Day Visit Streak"];
+const titles = ["30-Day Visit Streak", "30-Day Like Streak", "30-Day Comment Streak", "90-Day Visit Streak", "90-Day Like Streak", "90-Day Comment Streak"];
 
 describe("read-only owner streak badge observations", () => {
   let browser: Browser;
@@ -25,11 +25,12 @@ describe("read-only owner streak badge observations", () => {
     duplicateCard?: boolean;
     changeOwnerAfterBadge?: boolean;
     paginate?: boolean;
+    missingBadge?: string;
   } = {}) {
     const context = await browser.newContext();
     contexts.push(context);
     const state = { badgeClicks: 0, moreClicks: 0, reads: [] as string[], writes: 0 };
-    const progress = options.progress ?? ["7 / 30 days", "4 / 30 days", "2 / 30 days", "8 / 90 days"];
+    const progress = options.progress ?? ["7 / 30 days", "4 / 30 days", "2 / 30 days", "8 / 90 days", "6 / 90 days", "5 / 90 days"];
     await context.route("**/*", async route => {
       const request = route.request();
       const url = new URL(request.url());
@@ -51,7 +52,7 @@ describe("read-only owner streak badge observations", () => {
         state.writes++;
         return route.fulfill({ status: 403, headers: cors });
       }
-      const cards = titles.map((title, index) => `<button data-badge="${index}" aria-label="Fixture badge description"><img alt="${title}"><img alt="${title}" hidden></button>`).join("");
+      const cards = titles.map((title, index) => title === options.missingBadge ? "" : `<button data-badge="${index}" aria-label="Fixture badge description"><img alt="${title}"><img alt="${title}" hidden></button>`).join("");
       const initialCards = options.paginate === false ? cards : '<button aria-label="Fixture earned badge"><img alt="7-Day Visit Streak"></button><button id="more">Load more</button>';
       return route.fulfill({ contentType: "text/html", body: `<!doctype html><html><body>
         <header>${options.signedOut ? "<button>Sign in</button>" : ""}</header>
@@ -95,18 +96,18 @@ describe("read-only owner streak badge observations", () => {
   it("reads each actual dialog independently, paginates badges, and performs only account reads", async () => {
     const { context, existingPage, state } = await fixture({ query: "?tab=badges" });
     const summary = await readAwsStreaks(context, expectedProfile, { timeoutMs: 8000 });
-    expect(summary).toMatchObject({ visit: { current: 7, total: 30 }, like: { current: 4, total: 30 }, comment: { current: 2, total: 30 }, visit90: { current: 8, total: 90 } });
+    expect(summary).toMatchObject({ visit: { current: 7, total: 30 }, like: { current: 4, total: 30 }, comment: { current: 2, total: 30 }, visit90: { current: 8, total: 90 }, like90: { current: 6, total: 90 }, comment90: { current: 5, total: 90 } });
     expect(Number.isFinite(Date.parse(summary.observedAt))).toBe(true);
-    expect(state.badgeClicks).toBe(4);
+    expect(state.badgeClicks).toBe(6);
     expect(state.moreClicks).toBe(1);
-    expect(state.reads.filter(read => read === "POST /ums/profile/get").length).toBeGreaterThanOrEqual(9);
+    expect(state.reads.filter(read => read === "POST /ums/profile/get").length).toBeGreaterThanOrEqual(13);
     expect(state.writes).toBe(0);
     unchangedPage(context, existingPage);
   });
 
   it("accepts zero and completed progress without treating awarded badges as the current streak", async () => {
-    const { context } = await fixture({ progress: ["0 / 30 days", "30 / 30 days", "0 / 30 days", "90 / 90 days"], paginate: false });
-    expect(await readAwsStreaks(context, expectedProfile, { timeoutMs: 8000 })).toMatchObject({ visit: { current: 0 }, like: { current: 30 }, comment: { current: 0 }, visit90: { current: 90 } });
+    const { context } = await fixture({ progress: ["0 / 30 days", "30 / 30 days", "0 / 30 days", "90 / 90 days", "0 / 90 days", "90 / 90 days"], paginate: false });
+    expect(await readAwsStreaks(context, expectedProfile, { timeoutMs: 8000 })).toMatchObject({ visit: { current: 0 }, like: { current: 30 }, comment: { current: 0 }, visit90: { current: 90 }, like90: { current: 0, total: 90 }, comment90: { current: 90, total: 90 } });
   });
 
   it.each([
@@ -132,8 +133,31 @@ describe("read-only owner streak badge observations", () => {
   });
 
   it.each(["missing", "7 / 90 days", "31 / 30 days", "-1 / 30 days", "7.5 / 30 days", "7 / 30 days 8 / 30 days", "9007199254740992 / 30 days"])("rejects ambiguous or invalid progress: %s", async invalid => {
-    const { context, existingPage } = await fixture({ progress: [invalid, "4 / 30 days", "2 / 30 days", "8 / 90 days"] });
+    const { context, existingPage } = await fixture({ progress: [invalid, "4 / 30 days", "2 / 30 days", "8 / 90 days", "6 / 90 days", "5 / 90 days"] });
     await expect(readAwsStreaks(context, expectedProfile, { timeoutMs: 4000 })).rejects.toMatchObject({ code: "state_unknown" });
+    unchangedPage(context, existingPage);
+  });
+
+  it.each([
+    { index: 4, progress: "6 / 30 days" },
+    { index: 5, progress: "5 / 30 days" },
+    { index: 4, progress: "91 / 90 days" },
+    { index: 5, progress: "91 / 90 days" }
+  ])("validates the actual 90-day badge denominator and range: %j", async invalid => {
+    const progress = ["7 / 30 days", "4 / 30 days", "2 / 30 days", "8 / 90 days", "6 / 90 days", "5 / 90 days"];
+    progress[invalid.index] = invalid.progress;
+    const { context, existingPage, state } = await fixture({ progress });
+    await expect(readAwsStreaks(context, expectedProfile, { timeoutMs: 20000 })).rejects.toMatchObject({ code: "state_unknown" });
+    expect(state.badgeClicks).toBe(invalid.index + 1);
+    expect(state.writes).toBe(0);
+    unchangedPage(context, existingPage);
+  });
+
+  it.each(["90-Day Like Streak", "90-Day Comment Streak"])("requires the exact 90-day badge instead of copying a 30-day count: %s", async missingBadge => {
+    const { context, existingPage, state } = await fixture({ missingBadge });
+    await expect(readAwsStreaks(context, expectedProfile, { timeoutMs: 1500 })).rejects.toBeInstanceOf(AwsStreakReadError);
+    expect(state.badgeClicks).toBe(0);
+    expect(state.writes).toBe(0);
     unchangedPage(context, existingPage);
   });
 

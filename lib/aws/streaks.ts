@@ -14,6 +14,8 @@ export interface AwsStreakSummary {
   like: AwsStreakProgress<30>;
   comment: AwsStreakProgress<30>;
   visit90: AwsStreakProgress<90>;
+  like90: AwsStreakProgress<90>;
+  comment90: AwsStreakProgress<90>;
 }
 
 export class AwsStreakReadError extends Error {
@@ -41,7 +43,7 @@ function selfEditLink(raw: string): boolean {
   } catch { return false; }
 }
 
-/** Read four owner-only badge dialogs; no engagement or profile edits are submitted. */
+/** Read six owner-only badge dialogs; no engagement or profile edits are submitted. */
 export async function readAwsStreaks(context: BrowserContext, expectedAccountProfileUrl: string,
   options: { timeoutMs?: number; deadline?: number } = {}): Promise<AwsStreakSummary> {
   const timeoutMs = options.timeoutMs ?? 60000;
@@ -105,7 +107,7 @@ export async function readAwsStreaks(context: BrowserContext, expectedAccountPro
     await badges.waitFor({ state: "visible", timeout: remaining() });
     if (await badges.getAttribute("aria-selected") !== "true") throw new AwsStreakReadError("selector_unverified");
 
-    const titles = ["30-Day Visit Streak", "30-Day Like Streak", "30-Day Comment Streak", "90-Day Visit Streak"];
+    const titles = ["30-Day Visit Streak", "30-Day Like Streak", "30-Day Comment Streak", "90-Day Visit Streak", "90-Day Like Streak", "90-Day Comment Streak"];
     const badgeButtons = (title: string) => main.getByRole("button").filter({ has: ownerPage.getByAltText(title, { exact: true }) });
     for (let index = 0; index < 8; index++) {
       if ((await Promise.all(titles.map(title => badgeButtons(title).count()))).every(count => count === 1)) break;
@@ -146,8 +148,10 @@ export async function readAwsStreaks(context: BrowserContext, expectedAccountPro
     const like = await readBadge(titles[1], 30);
     const comment = await readBadge(titles[2], 30);
     const visit90 = await readBadge(titles[3], 90);
+    const like90 = await readBadge(titles[4], 90);
+    const comment90 = await readBadge(titles[5], 90);
     await verifyOwner();
-    return { observedAt: new Date().toISOString(), visit, like, comment, visit90 };
+    return { observedAt: new Date().toISOString(), visit, like, comment, visit90, like90, comment90 };
   } catch (error) {
     if (error instanceof AwsStreakReadError) throw error;
     if (error instanceof OwnArticleActivityError) throw new AwsStreakReadError(error.code);

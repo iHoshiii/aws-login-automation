@@ -12,7 +12,8 @@ const comment = "IAM roles avoid embedding long-lived credentials in the workloa
 const started = new Date("2026-10-10T01:05:00Z");
 const activity: AwsStreakSummary = {
   observedAt: started.toISOString(), visit: { current: 7, total: 30 }, like: { current: 7, total: 30 },
-  comment: { current: 7, total: 30 }, visit90: { current: 7, total: 90 }
+  comment: { current: 7, total: 30 }, visit90: { current: 7, total: 90 },
+  like90: { current: 13, total: 90 }, comment90: { current: 21, total: 90 }
 };
 const directories: string[] = [];
 
@@ -91,6 +92,41 @@ describe("durable local daily execution", () => {
     expect(result).toEqual({ outcome: "existing", run: seed });
     expect(setup.options.createDriver).not.toHaveBeenCalled();
     expect(setup.actions).toEqual([]);
+  });
+
+  it("leaves an older four-observation journal unchanged and never repeats its engagement", async () => {
+    const setup = await fixture();
+    const legacy: LocalDailyRun = {
+      version: 1, date: "2026-10-10", status: "verified", startedAt: started.toISOString(),
+      accountProfileUrl: profile, post: candidate, comment, actions: { like: "verified", comment: "verified" },
+      activity: {
+        observedAt: activity.observedAt, visit: activity.visit, like: activity.like,
+        comment: activity.comment, visit90: activity.visit90
+      }
+    };
+    await seedLocalDailyRun(setup.directory, legacy);
+    const before = await readFile(join(setup.directory, "2026-10-10.json"), "utf8");
+    const result = await executeLocalDaily(setup.options);
+    expect(result).toEqual({ outcome: "existing", run: legacy });
+    expect(result.run?.activity).not.toHaveProperty("like90");
+    expect(result.run?.activity).not.toHaveProperty("comment90");
+    expect(await readFile(join(setup.directory, "2026-10-10.json"), "utf8")).toBe(before);
+    expect(setup.options.createDriver).not.toHaveBeenCalled();
+    expect(setup.options.verifyActivity).not.toHaveBeenCalled();
+    expect(setup.actions).toEqual([]);
+  });
+
+  it("keeps missing or invalid new 90-day observations unknown after verified engagement", async () => {
+    const missing = await fixture({ verifyActivity: async () => ({ ...activity, like90: undefined }) as unknown as AwsStreakSummary });
+    const missingResult = await executeLocalDaily(missing.options);
+    expect(missingResult.run?.status).toBe("verified");
+    expect(missingResult.run?.activity).toBeUndefined();
+    expect(missingResult.run?.activityError).toContain("could not be observed");
+    const invalid = await fixture({ verifyActivity: async () => ({ ...activity, comment90: { current: 91, total: 90 } }) });
+    const invalidResult = await executeLocalDaily(invalid.options);
+    expect(invalidResult.run?.status).toBe("verified");
+    expect(invalidResult.run?.activity).toBeUndefined();
+    expect(invalidResult.run?.activityError).toContain("could not be observed");
   });
 
   it("records expired authentication without claiming engagement", async () => {

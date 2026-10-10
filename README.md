@@ -1,6 +1,6 @@
 # AWS Login Automation
 
-For daily activity on this Windows computer using the saved AWS session, see [the local daily task guide](docs/local-daily.md). It runs at 09:00 Singapore/Philippines time, prepares relevant comments, and reads badge progress from Manage profile.
+For daily activity on this Windows computer using the saved AWS session, see [the local daily task guide](docs/local-daily.md). It runs at 09:00 Singapore/Philippines time, prepares relevant comments, and reads the 30-day and 90-day visit, like and comment badges from Manage profile. The goal is 90 consecutive days for all three activities.
 
 A private Next.js application that searches AWS Builder Center for a post your account has neither liked nor commented on, likes it, publishes your configured comment, verifies the observed results, and stores the daily run in Supabase. Vercel invokes the worker daily after **09:00 Philippine time**. A manual review mode remains available for earlier records and operator fallback.
 

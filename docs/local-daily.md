@@ -2,7 +2,7 @@
 
 The Windows task runs at **09:00 Singapore/Philippines time**, using the private AWS session created by `npm run aws:connect`. This local mode does not need Supabase or Vercel credentials. The computer must be on and logged into Windows; missed runs start when it becomes available. It cannot make up activity for previous days.
 
-Each run opens Home, scrolls to the feed, and inspects up to 24 articles. It skips previously liked or commented articles and articles whose history cannot be verified. It prepares a comment based on the inspected title and topic, then submits one like and one comment. Both must persist after reload. It then opens **Manage profile → Activity → Badges**, loads additional cards, and reads the visit, like and comment badge progress, including the 90-day visit badge. Those observed counts are separate from the verified article actions; the app does not assume a badge advanced.
+Each run opens Home, scrolls to the feed, and inspects up to 24 articles. It skips previously liked or commented articles and articles whose history cannot be verified. It prepares a comment based on the inspected title and topic, then submits one like and one comment. Both must persist after reload. It then opens **Manage profile → Activity → Badges**, loads additional cards, and reads the 30-day and 90-day badges for visits, likes and comments. The goal is **90 consecutive days for all three activities**. Each count comes from its own AWS badge dialog; the app does not assume a badge advanced.
 
 Local comments use topic-specific questions about the inspected article. Articles without enough relevant technical context are skipped. This mode does not use the dashboard's fixed `AWS_COMMENT_TEXT`.
 
@@ -11,6 +11,8 @@ Check the saved login and AWS badge counts without adding engagement:
 ```powershell
 npm run aws:daily -- --check
 ```
+
+The output includes `visit90`, `like90` and `comment90`, each with `total: 90`. The existing `visit`, `like` and `comment` fields show the separate 30-day badges. Older daily records can lack the newly added 90-day like and comment observations; a fresh check reads them directly from AWS.
 
 Check today's record:
 

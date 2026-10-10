@@ -7,6 +7,9 @@ import type { AwsStreakSummary } from "./streaks";
 
 export type LocalDailyStatus = "running" | "verified" | "auth_required" | "no_post" | "failed" | "uncertain";
 export type LocalDailyActionStatus = "not_started" | "started" | "verified";
+/** Earlier journals contain four badge observations; leave absent counts unknown. */
+export type LocalDailyActivitySummary = Omit<AwsStreakSummary, "like90" | "comment90"> &
+  Partial<Pick<AwsStreakSummary, "like90" | "comment90">>;
 
 /** This journal contains public observations, never browser state or credentials. */
 export interface LocalDailyRun {
@@ -19,7 +22,7 @@ export interface LocalDailyRun {
   post?: AwsCandidate;
   comment?: string;
   actions: { like: LocalDailyActionStatus; comment: LocalDailyActionStatus };
-  activity?: AwsStreakSummary;
+  activity?: LocalDailyActivitySummary;
   activityError?: string;
   error?: string;
 }
@@ -116,7 +119,7 @@ async function writeRun(directory: string, run: LocalDailyRun): Promise<void> {
   catch (error) { await unlink(temporary).catch(() => undefined); throw error; }
 }
 
-function publicActivity(value: AwsStreakSummary): AwsStreakSummary {
+function publicActivity(value: LocalDailyActivitySummary, requireAll = false): LocalDailyActivitySummary {
   if (!Number.isFinite(Date.parse(value.observedAt))) throw new Error("Invalid profile observation timestamp.");
   const count = <Total extends 30 | 90>(observed: { current: number; total: Total }, total: Total) => {
     if (observed.total !== total || !Number.isInteger(observed.current) || observed.current < 0 || observed.current > total) {
@@ -124,9 +127,12 @@ function publicActivity(value: AwsStreakSummary): AwsStreakSummary {
     }
     return { current: observed.current, total };
   };
+  if (requireAll && (!value.like90 || !value.comment90)) throw new Error("Missing 90-day profile streak observations.");
   return {
     observedAt: value.observedAt,
-    visit: count(value.visit, 30), like: count(value.like, 30), comment: count(value.comment, 30), visit90: count(value.visit90, 90)
+    visit: count(value.visit, 30), like: count(value.like, 30), comment: count(value.comment, 30), visit90: count(value.visit90, 90),
+    ...(value.like90 ? { like90: count(value.like90, 90) } : {}),
+    ...(value.comment90 ? { comment90: count(value.comment90, 90) } : {})
   };
 }
 
@@ -252,7 +258,7 @@ export async function executeLocalDaily(options: ExecuteLocalDailyOptions): Prom
     // A profile read cannot undo article-level evidence that both writes persisted.
     try {
       checkWindow();
-      run = { ...run, activity: publicActivity(await options.verifyActivity()) };
+      run = { ...run, activity: publicActivity(await options.verifyActivity(), true) };
     } catch {
       run = { ...run, activityError: "Profile Activity streaks could not be observed. Check Manage profile on AWS." };
     }
