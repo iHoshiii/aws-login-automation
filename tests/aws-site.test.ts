@@ -10,33 +10,64 @@ const escapeHtml = (value: string) => value.replaceAll("&", "&amp;").replaceAll(
 
 // These controls are a local fixture based on the inspected public DOM. The
 // authenticated composer and identity are synthetic; no real AWS request is made.
-async function fixture(browser: Browser, options: { liked?: boolean; comments?: Comment[]; pageSize?: number; persistLike?: boolean; persistComment?: boolean; auth?: boolean } = {}) {
-  const page = await browser.newPage();
-  const state = { liked: options.liked ?? false, comments: options.comments ?? [], likeAttempts: 0, commentAttempts: 0 };
+async function fixture(browser: Browser, options: { liked?: boolean; comments?: Comment[]; pageSize?: number; persistLike?: boolean; persistComment?: boolean; auth?: boolean; identitySource?: "self_profile"; recommendations?: boolean; backgroundRequests?: boolean; ssrUnliked?: boolean; hiddenOwnComment?: boolean; independentToolbars?: boolean; lazyComments?: boolean; activity?: "delayed" | "hanging" | "failed" | "aborted" | "http_failed" } = {}) {
+  const page = options.identitySource ? await (await browser.newContext()).newPage() : await browser.newPage();
+  const state = { liked: options.liked ?? false, comments: options.comments ?? [], likeAttempts: 0, commentAttempts: 0, recommendationAttempts: 0, selfAlias: "fixture-account" };
   const pageSize = options.pageSize ?? 10;
   const markup = (comment: Comment) => `<div class="_comment-main_recorded"><div data-module-id="profile"><a href="${escapeHtml(comment.author)}">Author</a></div><div class="_comment-content_recorded"><div class="_editor-container_recorded">${escapeHtml(comment.text)}</div><button aria-label="Reply ${comment.replies ?? 0}">${comment.replies ?? 0}</button></div></div>`;
   await page.exposeFunction("fixtureLike", () => { state.likeAttempts++; if (options.persistLike !== false) state.liked = true; });
   await page.exposeFunction("fixtureComment", (text: string) => { state.commentAttempts++; if (options.persistComment !== false) state.comments.unshift({ author: own, text }); });
-  await page.route("**/*", async route => {
+  await page.exposeFunction("fixtureRecommendation", () => { state.recommendationAttempts++; });
+  const routeTarget = options.identitySource ? page.context() : page;
+  await routeTarget.route("**/*", async route => {
+    const requestUrl = new URL(route.request().url());
+    const cors = { "access-control-allow-origin": origin, "access-control-allow-credentials": "true", "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-headers": "builder-session-token,x-csrf-token,builder-id,builder-profile-id,content-type" };
+    if (requestUrl.hostname === "api.builder.aws.com" && route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors, body: "" });
+    if (requestUrl.hostname === "api.builder.aws.com" && requestUrl.pathname === "/ums/profile/get") {
+      return route.fulfill({ contentType: "application/json", headers: cors, body: JSON.stringify({ profile: { basicInfo: { alias: state.selfAlias, userId: "fixture-user", builderProfileId: "fixture-profile" } } }) });
+    }
+    if (requestUrl.hostname === "api.builder.aws.com" && requestUrl.pathname === "/cs/v2/articles") {
+      return route.fulfill({ contentType: "application/json", headers: cors, body: JSON.stringify({ articleId: requestUrl.searchParams.get("articleId"), isLiked: state.liked, commentsCount: state.comments.length }) });
+    }
+    if (requestUrl.hostname === "dataplane.rum.us-east-1.amazonaws.com" || (requestUrl.hostname === "api.builder.aws.com" && requestUrl.pathname.startsWith("/sms/")) || (requestUrl.hostname === "api.builder.aws.com" && requestUrl.pathname === "/cs/activity" && options.activity === "hanging")) {
+      await new Promise<void>(resolve => page.once("close", () => resolve()));
+      return;
+    }
+    if (requestUrl.hostname === "api.builder.aws.com" && requestUrl.pathname === "/cs/activity") {
+      if (options.activity === "failed") return route.abort("failed");
+      if (options.activity === "aborted") return route.abort("aborted");
+      if (options.activity === "http_failed") return route.fulfill({ status: 503, contentType: "application/json", headers: { "access-control-allow-origin": origin }, body: '{"error":"unavailable"}' });
+      await new Promise(resolve => setTimeout(resolve, 300));
+      return route.fulfill({ contentType: "application/json", headers: { "access-control-allow-origin": origin }, body: JSON.stringify({ liked: state.liked }) });
+    }
+    if (options.identitySource && new URL(route.request().url()).pathname === "/profile") {
+      return route.fulfill({ contentType: "text/html", body: `<main><h1>Fixture owner</h1><a href="/edit/profile">Edit information</a><button onclick="document.querySelector('[role=dialog]').hidden=false">QR code</button></main><div role="dialog" hidden>QR code Alias: @${state.selfAlias} <button>Download QR code</button></div>` });
+    }
     const home = new URL(route.request().url()).pathname === "/";
-    const comments = state.comments.map(markup);
+    const comments = (options.hiddenOwnComment ? [] : state.comments).map(markup);
     await route.fulfill({ contentType: "text/html", body: `<!doctype html><html><body>
-      <header>${options.auth === false ? '<button>Sign in</button>' : `<a id="own-account" href="${own}">My profile</a>`}</header>
+      <header>${options.auth === false ? '<button>Sign in</button>' : options.identitySource ? '<button id="account-menu" onclick="document.querySelector(\'[role=menu]\').hidden=false">Fixture owner</button><div role="menu" hidden><a id="own-account" href="/profile" role="menuitem">Manage profile</a><a href="/profile/content" role="menuitem">Manage content</a><span role="menuitem">Sign out</span></div>' : `<a id="own-account" href="${own}">My profile</a>`}</header>
       <main><a href="${own}">Article author</a><h1>${candidate.title}</h1>${home ? `<a href="/content/OlderSpotlight/spotlight">Older spotlight article</a><button data-testid="latest" aria-pressed="false">Latest</button><div role="feed"><a href="/content/RecordedId/an-observed-article">${candidate.title}</a><a href="/content/RecordedId/an-observed-article#comments">12</a><a href="https://other.example/content/id/wrong">External</a></div>` : ""}
-      <button aria-label="Like this article 12" aria-pressed="${state.liked}">12</button>
-      <p>The article's useful content.</p>
-      <button aria-label="Like this article 12" aria-pressed="${state.liked}">12</button>
+      <button aria-label="Like this article 12" aria-pressed="${options.activity || options.ssrUnliked ? false : state.liked}">12</button>
+      <p ${options.lazyComments ? 'style="min-height:1400px"' : ""}>The article's useful content.</p>
+      <button aria-label="Like this article 12" aria-pressed="${options.activity || options.ssrUnliked ? false : state.liked}">12</button>
       <div id="comments"><h2>Comments (${comments.length})</h2>
       <div class="recorded-composer"><div id="comment-editor" contenteditable="true" role="textbox" aria-label="Fixture comment"></div><button id="comment-submit" type="submit">Post comment</button></div>
-      <div role="feed" aria-busy="false"><div id="comment-list">${comments.slice(0,pageSize).join("")}</div>${comments.length > pageSize ? '<button id="more-comments">Load more</button>' : ""}</div></div></main>
+      <div role="feed" aria-busy="${comments.length > pageSize ? "false" : "true"}">${options.lazyComments ? '<span id="comments-loading" role="status" aria-label="Loading" aria-busy="true"></span>' : ""}<div id="comment-list">${options.lazyComments ? "" : comments.slice(0,pageSize).join("")}</div>${comments.length > pageSize ? '<button id="more-comments">Load more</button>' : ""}</div></div>
+      ${options.recommendations ? '<aside><button aria-label="Likes 99" aria-pressed="true" onclick="window.fixtureRecommendation()">99</button><button aria-label="Likes 12" aria-pressed="false" onclick="window.fixtureRecommendation()">12</button></aside>' : ""}</main>
       <script>
+      fetch('https://api.builder.aws.com/ums/profile/get',{method:'POST',credentials:'include',headers:{'content-type':'application/json','builder-session-token':'fixture-signer'},body:'{}'}).catch(()=>{});
+      ${options.backgroundRequests ? `fetch('https://dataplane.rum.us-east-1.amazonaws.com/telemetry').catch(()=>{});fetch('https://api.builder.aws.com/sms/space/feed').catch(()=>{});fetch('https://api.builder.aws.com/sms/members/spaces/status',{method:'POST'}).catch(()=>{});` : ""}
+      ${options.activity ? `fetch('https://api.builder.aws.com/cs/activity').then(response=>{if(!response.ok)throw new Error('Activity unavailable');return response.json();}).then(activity=>{for(const button of document.querySelectorAll('main button[aria-label^="Like this article"]'))button.setAttribute('aria-pressed',String(activity.liked));}).catch(()=>{});` : ""}
+      document.addEventListener('keydown',event=>{if(event.key==='Escape'){const menu=document.querySelector('[role=menu]');if(menu)menu.hidden=true;}});
       const comments=${JSON.stringify(comments)};let shown=${pageSize};
+      ${options.lazyComments ? `const observer=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting)){document.querySelector('#comment-list').innerHTML=comments.slice(0,${pageSize}).join('');document.querySelector('#comments-loading').remove();observer.disconnect();}});observer.observe(document.querySelector('#comments [role="feed"]'));` : ""}
       document.querySelector('button[data-testid=latest]')?.addEventListener('click',event=>event.target.setAttribute('aria-pressed','true'));
       document.querySelector('#more-comments')?.addEventListener('click',event=>{
         document.querySelector('#comment-list').insertAdjacentHTML('beforeend',comments.slice(shown,shown+${pageSize}).join(''));shown+=${pageSize};if(shown>=comments.length)event.target.remove();
       });
       for(const button of document.querySelectorAll('main button[aria-label^="Like this article"][aria-pressed]'))button.addEventListener('click',async()=>{
-        await window.fixtureLike();for(const item of document.querySelectorAll('main button[aria-label^="Like this article"][aria-pressed]'))item.setAttribute('aria-pressed','true');
+        await window.fixtureLike();${options.independentToolbars ? "button.setAttribute('aria-pressed','true');" : `for(const item of document.querySelectorAll('main button[aria-label^="Like this article"][aria-pressed]'))item.setAttribute('aria-pressed','true');`}
       });
       document.querySelector('#comment-submit').addEventListener('click',async()=>{
         const editor=document.querySelector('#comment-editor');const text=editor.innerText;await window.fixtureComment(text);
@@ -48,8 +79,8 @@ async function fixture(browser: Browser, options: { liked?: boolean; comments?: 
       </script></body></html>` });
   });
   await page.goto(candidate.url);
-  const profile = await captureSiteProfile(page, { accountProfileUrl: own, accountSelector: "#own-account", commentEditorSelector: "#comment-editor", commentSubmitSelector: "#comment-submit" });
-  const driver = createAwsSiteDriver(page, profile, { timeoutMs: 1200, maxCommentPages: 3 });
+  const profile = await captureSiteProfile(page, { accountProfileUrl: own, accountSelector: "#own-account", commentEditorSelector: "#comment-editor", commentSubmitSelector: "#comment-submit", ...(options.identitySource ? { identitySource: options.identitySource, accountMenuSelector: "#account-menu" } : {}) });
+  const driver = createAwsSiteDriver(page, profile, { timeoutMs: options.identitySource ? 4000 : 1200, maxCommentPages: 3 });
   return { page, state, profile, driver };
 }
 
@@ -57,7 +88,7 @@ describe("Builder site adapter against isolated browser fixtures", () => {
   let browser: Browser;
   let pages: Page[] = [];
   beforeAll(async () => { browser = await chromium.launch({ headless: true }); });
-  afterEach(async () => { await Promise.all(pages.map(page => page.close())); pages = []; });
+  afterEach(async () => { await Promise.all(pages.map(page => page.context().close())); pages = []; });
   afterAll(async () => { await browser?.close(); });
   async function setup(options: Parameters<typeof fixture>[1] = {}) { const result = await fixture(browser, options); pages.push(result.page); return result; }
 
@@ -84,6 +115,14 @@ describe("Builder site adapter against isolated browser fixtures", () => {
     expect(state.commentAttempts).toBe(0);
   });
 
+  it("reads and likes the current article when recommendations have separate like controls", async () => {
+    const { driver, state } = await setup({ recommendations: true });
+    expect(await driver.inspectCandidate(candidate)).toMatchObject({ liked: false, commented: false, commentsComplete: true });
+    expect(await driver.likeAndVerify(candidate)).toBe("verified");
+    expect(state.likeAttempts).toBe(1);
+    expect(state.recommendationAttempts).toBe(0);
+  });
+
   it("finds own comments on later pages and blocks any like attempt", async () => {
     const { driver, state } = await setup({ comments: [{ author: "/community/@another", text: "Earlier" }, { author: own, text: "Already mine" }], pageSize: 1 });
     expect(await driver.inspectCandidate(candidate)).toMatchObject({ commented: true });
@@ -107,6 +146,59 @@ describe("Builder site adapter against isolated browser fixtures", () => {
     expect(await driver.likeAndVerify(candidate)).toBe("already_done");
     expect(state.likeAttempts).toBe(0);
   });
+
+  it("does not click an anonymous SSR toolbar when the owner's persisted like already exists", async () => {
+    const { driver, state } = await setup({ liked: true, ssrUnliked: true });
+    expect(await driver.inspectCandidate(candidate)).toMatchObject({ liked: true });
+    expect(await driver.likeAndVerify(candidate)).toBe("already_done");
+    expect(state.likeAttempts).toBe(0);
+  });
+
+  it("verifies one persisted like when the two toolbars update independently", async () => {
+    const { driver, state } = await setup({ independentToolbars: true, ssrUnliked: true });
+    expect(await driver.likeAndVerify(candidate)).toBe("verified");
+    expect(await driver.likeAndVerify(candidate)).toBe("already_done");
+    expect(state.likeAttempts).toBe(1);
+  });
+
+  it("scrolls lazy comments into view and accepts exhausted feed aria-busy while requiring the spinner to finish", async () => {
+    const { driver, state } = await setup({ lazyComments: true, comments: [{ author: "/community/@other", text: "Loaded after scrolling" }] });
+    expect(await driver.inspectCandidate(candidate)).toMatchObject({ liked: false, commented: false, commentsComplete: true });
+    expect(state.likeAttempts).toBe(0);
+    expect(state.commentAttempts).toBe(0);
+  });
+
+  it("blocks writes when a cached empty comment list omits an existing own comment", async () => {
+    const { driver, state } = await setup({ comments: [{ author: own, text: "Already mine" }], hiddenOwnComment: true });
+    await expect(driver.likeAndVerify(candidate)).rejects.toMatchObject({ code: "state_unknown" });
+    expect(state.likeAttempts).toBe(0);
+    expect(state.commentAttempts).toBe(0);
+  });
+
+  it("allows inspection while observed telemetry and space sidebar requests remain open", async () => {
+    const { driver, state } = await setup({ backgroundRequests: true });
+    expect(await driver.checkAuthentication()).toBe(true);
+    expect(await driver.inspectCandidate(candidate)).toMatchObject({ liked: false, commentsComplete: true });
+    expect(state.likeAttempts).toBe(0);
+    expect(state.commentAttempts).toBe(0);
+  });
+
+  it("waits for persisted activity hydration before considering an SSR unpressed button eligible", async () => {
+    const { page, profile, state } = await setup({ liked: true, activity: "delayed", backgroundRequests: true });
+    const driver = createAwsSiteDriver(page, profile, { timeoutMs: 2000 });
+    expect(await driver.inspectCandidate(candidate)).toMatchObject({ liked: true });
+    expect(await driver.likeAndVerify(candidate)).toBe("already_done");
+    expect(state.likeAttempts).toBe(0);
+  });
+
+  for (const activity of ["hanging", "failed", "aborted", "http_failed"] as const) {
+    it(`blocks writes when article activity requests are ${activity}`, async () => {
+      const { driver, state } = await setup({ activity });
+      await expect(driver.likeAndVerify(candidate)).rejects.toMatchObject({ code: "state_unknown" });
+      expect(state.likeAttempts).toBe(0);
+      expect(state.commentAttempts).toBe(0);
+    });
+  }
 
   it("verifies persistence and sends only one like and one comment across retries", async () => {
     const { driver, state } = await setup();
@@ -133,9 +225,8 @@ describe("Builder site adapter against isolated browser fixtures", () => {
 
   it("rejects a shifted selector pointing at a different submit button", async () => {
     const { page, profile, state } = await setup({ liked: true });
-    await page.unroute("**/*");
     const html = (await page.content()).replace("Post comment", "Delete account");
-    await page.route("**/*", route => route.fulfill({ contentType: "text/html", body: html }));
+    await page.route(`${origin}/**`, route => route.fulfill({ contentType: "text/html", body: html }));
     const driver = createAwsSiteDriver(page, profile, { timeoutMs: 1200 });
     await expect(driver.commentAndVerify(candidate, "A relevant comment")).rejects.toMatchObject({ code: "selector_unverified" });
     expect(state.commentAttempts).toBe(0);
@@ -159,6 +250,39 @@ describe("Builder site adapter against isolated browser fixtures", () => {
   it("cannot authenticate with an own-profile author link in an article", async () => {
     const { page } = await setup();
     await expect(captureSiteProfile(page, { accountProfileUrl: own, accountSelector: `main a[href="${own}"]`, commentEditorSelector: "#comment-editor", commentSubmitSelector: "#comment-submit" })).rejects.toMatchObject({ code: "auth_required" });
+  });
+
+  it("captures and verifies the observed Manage profile menu using its own QR alias", async () => {
+    const { driver, profile, state, page } = await setup({ identitySource: "self_profile" });
+    expect(profile.identitySource).toBe("self_profile");
+    expect(profile.accountProfileUrl).toBe(own);
+    expect(await driver.checkAuthentication()).toBe(true);
+    expect(await driver.inspectCandidate(candidate)).toMatchObject({ liked: false, commented: false, commentsComplete: true });
+    expect(page.context().pages()).toEqual([page]);
+    expect(state.likeAttempts).toBe(0);
+    expect(state.commentAttempts).toBe(0);
+  });
+
+  it("blocks engagement when the signed-in self-profile alias differs from the recorded owner", async () => {
+    const { driver, state } = await setup({ identitySource: "self_profile" });
+    state.selfAlias = "another-account";
+    await expect(driver.likeAndVerify(candidate)).rejects.toMatchObject({ code: "auth_required" });
+    expect(state.likeAttempts).toBe(0);
+    expect(state.commentAttempts).toBe(0);
+  });
+
+  it("cannot authenticate from a Manage profile link outside the account header or menu", async () => {
+    const { page, state } = await setup({ identitySource: "self_profile" });
+    await page.evaluate(() => {
+      const link = document.createElement("a");
+      link.id = "article-profile";
+      link.href = "/profile";
+      link.textContent = "Manage profile";
+      document.querySelector("main")!.prepend(link);
+    });
+    await expect(captureSiteProfile(page, { identitySource: "self_profile", accountProfileUrl: own, accountSelector: "#article-profile", commentEditorSelector: "#comment-editor", commentSubmitSelector: "#comment-submit" })).rejects.toMatchObject({ code: "auth_required" });
+    expect(state.likeAttempts).toBe(0);
+    expect(state.commentAttempts).toBe(0);
   });
 
   it("a rejected worker fence prevents the actual like click", async () => {

@@ -1,5 +1,6 @@
 import type { BrowserContext, Page } from "playwright-core";
 import { canonicalProfileUrl } from "./site";
+import { isSelfProfileUrl, readSignedInSelfProfile } from "./identity";
 
 export class GoogleCaptureLoginRejectedError extends Error {
   constructor() {
@@ -21,7 +22,23 @@ export async function hasSignedInBuilderHeader(page: Page): Promise<boolean> {
     const href = await link.getAttribute("href");
     if (href) { try { profiles.add(canonicalProfileUrl(href)); } catch { /* Other header links are not account evidence. */ } }
   }
-  return profiles.size === 1;
+  if (profiles.size) return profiles.size === 1;
+  const menus = [];
+  for (const menu of await page.getByRole("menu").all()) {
+    if (!await menu.isVisible()) continue;
+    const ownLinks = [];
+    for (const link of await menu.locator("a[href]").all()) {
+      if (await link.isVisible() && (await link.textContent())?.replace(/\s+/g, " ").trim() === "Manage profile" && isSelfProfileUrl(await link.getAttribute("href") ?? "")) ownLinks.push(link);
+    }
+    const signOut = [];
+    for (const item of await menu.getByRole("menuitem", { name: "Sign out", exact: true }).all()) {
+      if (await item.isVisible()) signOut.push(item);
+    }
+    if (ownLinks.length === 1 && signOut.length === 1) menus.push(menu);
+  }
+  if (menus.length !== 1) return false;
+  try { await readSignedInSelfProfile(page.context()); return true; }
+  catch { return false; }
 }
 
 /** Verify the existing session after manual login; provider sign-in stays in the first browser. */

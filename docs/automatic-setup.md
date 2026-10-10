@@ -22,7 +22,7 @@ npm run aws:connect
 
 Set `AWS_BUILDER_ID_EMAIL` in `.env.local` to your Builder ID email. If absent, the helper uses the private `.local/aws-account.env` setting when present or asks you for an email. It fills the observed AWS email dialog and selects **Continue with Builder ID**. It never enters or stores your password. If that interface changes, it leaves sign-in to you instead of guessing controls.
 
-If the active sign-in flow goes through GitHub and Google, keep using that browser. The helper follows the existing OAuth flow and related popups, can select GitHub's **Continue with Google** and the available Google account/identifier controls, and waits for a verified return to AWS. Complete passwords, passkeys, device verification, and MFA yourself. A provider page or a URL returning to AWS alone does not establish a connected account. Open the account menu after returning to AWS so its profile link is visible; calibration starts only after the helper observes that signed-in header.
+If the active sign-in flow goes through GitHub and Google, keep using that browser. The helper follows the existing OAuth flow and related popups, can select GitHub's **Continue with Google** and the available Google account/identifier controls, and waits for a verified return to AWS. Complete passwords, passkeys, device verification, and MFA yourself. A provider page or a URL returning to AWS alone does not establish a connected account. Open the account menu after returning to AWS so your own profile or **Manage profile** link is visible; calibration starts only after the helper verifies the account.
 
 ### If Google rejects the test browser
 
@@ -38,7 +38,7 @@ npm run aws:connect -- --manual-browser
 2. Sign in to AWS yourself, following GitHub/Google and passkey/device prompts if present. Wait until you are back at AWS Builder Center.
 3. Close this dedicated Chrome window and any popups it opened. Then press Enter in the helper's terminal. Enter acknowledges the window close; it does not prove authentication succeeded.
 4. The helper waits for its Chrome process to exit and reopens the same isolated profile with a loopback connection for calibration and session capture.
-5. In the reopened AWS page, open your account menu so the profile link is visible. The helper verifies the signed-in header, then asks for the article and controls described below.
+5. In the reopened AWS page, open your account menu so your own profile or **Manage profile** link is visible. The helper verifies the account, then asks for the article and controls described below.
 
 Finish every Google/GitHub and passkey prompt in the first Chrome window. Close it only after you are back on AWS with a signed-in account; then press Enter in the terminal. The reopened window is for checking the existing AWS session and selecting controls. If it returns to Google sign-in, close it and restart `npm run aws:connect -- --manual-browser` to finish login in the first window.
 
@@ -48,9 +48,11 @@ If installed Chrome is not detected, set `AWS_MANUAL_CHROME_PATH` in `.env.local
 
 With either connection mode, follow these steps in the browser and terminal:
 
+The helper uses the worker's browser dimensions during calibration so responsive account controls match when the saved session is restored.
+
 1. Complete sign-in and open the account menu on AWS for verification. In the default mode, keep the active OAuth browser open; in manual-browser mode, finish the close/reopen sequence above first. For a passkey prompt, use your phone, security key, or device authenticator as requested.
 2. Paste a real `https://builder.aws.com/content/...` article URL with an empty top-level comment editor. Wait for it to load and press Enter.
-3. Select your account menu button in the page header when the helper prompts. The helper opens this menu and asks you to select your own profile link.
+3. Select your account menu button in the page header when the helper prompts. The helper opens this menu and asks you to select your own profile link or **Manage profile**. For **Manage profile**, it reads your public account alias from the authenticated profile page's QR dialog in a temporary tab, then returns to the article. You do not need to enter or guess your profile URL.
 4. Close the menu and scroll to the empty top-level comment editor. Select the editor and then the comment submit button when prompted.
 5. The helper validates the observed account, article like controls, and comment composer and writes the encrypted connection values.
 
@@ -75,6 +77,8 @@ npm run aws:probe
 The probe loads the configured session, checks that the recorded account is visible, discovers a limited number of candidates, and prints whether each candidate can be inspected and appears eligible. It visits AWS pages but does not submit a like or comment or write a daily database run.
 
 An eligible candidate has neither a prior like nor a prior comment by the connected account, with sufficient visible comment history to establish that result. Large, ambiguous, nested, or changed comment structures may be rejected. Seeing `state_unknown` means the worker cannot establish eligibility; it does not mean that the post has no existing activity.
+
+The driver reads the current account and article directly from AWS before interpreting the toolbar. An existing server-side like skips the article even if AWS's cached page still shows an unpressed button. The server's comment count must agree with the fully inspected comment list. Actual loading indicators remain guarded; completed feeds and unrelated notification or Space polling do not prevent inspection.
 
 If authentication or controls fail, rerun `aws:connect` and check the account and selections. The probe is necessary to establish live account/layout compatibility; the project's local fixture tests cannot do this for your account.
 

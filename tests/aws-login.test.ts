@@ -70,6 +70,27 @@ describe("manual connection session verification", () => {
     return page;
   }
 
+  it.each([
+    { menu: '<div role="menu"><a role="menuitem" href="/profile">Manage profile</a><a role="menuitem" href="/profile/content">Manage content</a><span role="menuitem">Sign out</span></div>', signedIn: true },
+    { menu: '<a href="/profile">Manage profile</a><div role="menu"><span role="menuitem">Sign out</span></div>', signedIn: false },
+    { menu: '<div role="menu"><a role="menuitem" href="/profile">Manage profile</a></div><div role="menu"><span role="menuitem">Sign out</span></div>', signedIn: false },
+    { menu: '<div role="menu"><a role="menuitem" href="/profile/content">Manage profile</a><span role="menuitem">Sign out</span></div>', signedIn: false }
+  ])("requires the observed self-profile and Sign out controls in the same menu: %j", async example => {
+    const context = await setup();
+    await context.route("**/*", route => route.fulfill({ contentType: "text/html", body: '<main><h1>Fixture owner</h1><a href="/edit/profile">Edit information</a><button onclick="document.querySelector(\'[role=dialog]\').hidden=false">QR code</button></main><div role="dialog" hidden>QR code Alias: @owner20 <button>Download QR code</button></div>' }));
+    const page = await fixture(context, "https://builder.aws.com/", `<header>${example.menu}</header><main><a href="/community/@article-author">Article author</a></main>`);
+    expect(await hasSignedInBuilderHeader(page)).toBe(example.signedIn);
+    expect(context.pages()).toEqual([page]);
+  });
+
+  it("does not accept an account menu when the self-profile ownership marker points elsewhere", async () => {
+    const context = await setup();
+    await context.route("**/*", route => route.fulfill({ contentType: "text/html", body: '<main><a href="/edit/someone-else">Edit information</a><button>QR code</button></main>' }));
+    const page = await fixture(context, "https://builder.aws.com/", '<header><div role="menu"><a role="menuitem" href="/profile">Manage profile</a><span role="menuitem">Sign out</span></div></header>');
+    expect(await hasSignedInBuilderHeader(page)).toBe(false);
+    expect(context.pages()).toEqual([page]);
+  });
+
   it("stops capture on Google's rejected URL when no signed-in AWS account is observed", async () => {
     const context = await setup();
     await fixture(context, "https://builder.aws.com/", '<header><button>Sign in</button></header>');

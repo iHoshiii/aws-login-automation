@@ -1,6 +1,8 @@
 import { chromium as playwright, type Browser, type BrowserContext } from "playwright-core";
 import type { AwsSessionBundle } from "./session";
 
+export const AWS_BROWSER_VIEWPORT = { width: 1365, height: 900 };
+
 export async function launchAwsBrowser(options: { headless?: boolean; session?: AwsSessionBundle } = {}): Promise<{ browser: Browser; context: BrowserContext }> {
   const serverless = process.env.VERCEL === "1";
   let browser: Browser;
@@ -12,7 +14,7 @@ export async function launchAwsBrowser(options: { headless?: boolean; session?: 
     browser = await playwright.launch({ ...(process.env.AWS_LOCAL_CHROMIUM_PATH ? { executablePath: process.env.AWS_LOCAL_CHROMIUM_PATH } : {}), headless: options.headless ?? true, timeout: 20000 });
   }
   try {
-    const context = await browser.newContext({ storageState: options.session?.storageState, viewport: { width: 1365, height: 900 }, locale: "en-US" });
+    const context = await browser.newContext({ storageState: options.session?.storageState, viewport: AWS_BROWSER_VIEWPORT, locale: "en-US" });
     context.setDefaultTimeout(8000);
     context.setDefaultNavigationTimeout(18000);
     return { browser, context };

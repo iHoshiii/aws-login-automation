@@ -3,8 +3,9 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { stdin as input, stdout as output } from "node:process";
 import type { Page } from "playwright-core";
-import { launchAwsBrowser } from "../lib/aws/browser";
+import { AWS_BROWSER_VIEWPORT, launchAwsBrowser } from "../lib/aws/browser";
 import { captureSiteProfile } from "../lib/aws/site";
+import { readSignedInSelfProfile } from "../lib/aws/identity";
 import { awsOnlyStorageState, encryptSession, generateSessionKey } from "../lib/aws/session";
 import { postUrl } from "../lib/validation";
 import { installControlPicker } from "../lib/aws/control-picker";
@@ -45,7 +46,7 @@ async function main() {
       await terminal.question("After your passkey or MFA is complete and you can see your signed-in AWS account, close this dedicated Chrome window and its popups, then press Enter here. ");
       console.log("Waiting for the dedicated login window to close before capturing the completed AWS connection.");
       await waitForManualChromeClosed(login.process, 10 * 60_000);
-      console.log("Capture phase: reopening the completed AWS session. Open your account menu so its profile link is visible. If you see Sign in, close this capture window and restart manual login.");
+      console.log("Capture phase: reopening the completed AWS session. Open your account menu so your profile or Manage profile link is visible. If you see Sign in, close this capture window and restart manual login.");
       connection = await attachManualChrome(login);
       page = await waitForSignedInBuilder(connection.context);
     } else {
@@ -59,7 +60,7 @@ async function main() {
       } catch {
         console.log("Automatic email entry could not be confirmed. Use Sign in in the AWS browser and sign in with your configured Builder ID email.");
       }
-      console.log("The helper will follow available GitHub/Google sign-in controls and wait for the AWS account to appear. On AWS, open your account menu to verify its profile link.");
+      console.log("The helper will follow available GitHub/Google sign-in controls and wait for the AWS account to appear. On AWS, open your account menu so your profile or Manage profile link is visible.");
       const login = await assistFederatedLogin(automated.context, {
         email, startPage: page, isBuilderSignedIn: hasSignedInBuilderHeader,
         onStatus: result => { console.log(result.message); }
@@ -71,6 +72,7 @@ async function main() {
       page = login.page;
     }
     const { context } = connection;
+    await page.setViewportSize(AWS_BROWSER_VIEWPORT);
     // OAuth may return to another page. Bind the picker to that actual AWS page.
     await page.exposeFunction("recordAwsControl", (value: { selector: string; href: string | null }) => { selected = value; });
     await page.keyboard.press("Escape");
@@ -81,16 +83,28 @@ async function main() {
     const safeOpener = await page.locator(opener.selector).evaluate(element => element.tagName === "BUTTON" && !!element.closest('header,[role="banner"]'));
     if (!safeOpener) throw new Error("Select an account menu button in the page header.");
     await page.locator(opener.selector).click();
-    const account = await pick(page, "Click your own profile link inside the account menu", "account");
-    if (!account.href || !/^https:\/\/builder\.aws\.com\/community\/@[A-Za-z0-9_.-]+\/?$/.test(account.href)) {
-      throw new Error("The selected link is not an observed Builder Center profile URL.");
+    const account = await pick(page, "Click your own profile or Manage profile link inside the account menu", "account");
+    let accountProfileUrl: string;
+    let identitySource: "self_profile" | undefined;
+    if (account.href && /^https:\/\/builder\.aws\.com\/community\/@[A-Za-z0-9_.-]+\/?$/.test(account.href)) {
+      accountProfileUrl = account.href.replace(/\/$/, "");
+    } else if (account.href && /^https:\/\/builder\.aws\.com\/profile\/?$/.test(account.href)) {
+      const ownProfileLink = await page.locator(account.selector).evaluate(element =>
+        element.tagName === "A" && !!element.closest('header,[role="banner"],[role="menu"]') &&
+        element.textContent?.replace(/\s+/g, " ").trim() === "Manage profile"
+      );
+      if (!ownProfileLink) throw new Error("Select Manage profile inside your signed-in account menu.");
+      accountProfileUrl = await readSignedInSelfProfile(context);
+      identitySource = "self_profile";
+    } else {
+      throw new Error("Select your own profile or Manage profile link inside the account menu.");
     }
     await page.keyboard.press("Escape");
     await terminal.question("Close the account menu if necessary and scroll to the empty comment editor, then press Enter. ");
     const editor = await pick(page, "Click the empty comment editor", "editor");
     const submit = await pick(page, "Click the comment submit button (selection only; nothing is posted)", "button");
     const profile = await captureSiteProfile(page, {
-      accountProfileUrl: account.href.replace(/\/$/, ""), accountSelector: account.selector,
+      accountProfileUrl, accountSelector: account.selector, ...(identitySource ? { identitySource } : {}),
       accountMenuSelector: opener.selector, commentEditorSelector: editor.selector, commentSubmitSelector: submit.selector
     });
     const state = awsOnlyStorageState(await context.storageState({ indexedDB: true }));
