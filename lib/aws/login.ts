@@ -1,5 +1,12 @@
-import type { Page } from "playwright-core";
+import type { BrowserContext, Page } from "playwright-core";
 import { canonicalProfileUrl } from "./site";
+
+export class GoogleCaptureLoginRejectedError extends Error {
+  constructor() {
+    super("Google rejected sign-in in the reopened capture browser. Run npm run aws:connect -- --manual-browser again. Complete your passkey or MFA and confirm your signed-in AWS account in the first Chrome window before closing it and pressing Enter. No AWS session was captured.");
+    this.name = "GoogleCaptureLoginRejectedError";
+  }
+}
 
 /** Positive account evidence, before the owner calibrates the exact controls. */
 export async function hasSignedInBuilderHeader(page: Page): Promise<boolean> {
@@ -15,6 +22,28 @@ export async function hasSignedInBuilderHeader(page: Page): Promise<boolean> {
     if (href) { try { profiles.add(canonicalProfileUrl(href)); } catch { /* Other header links are not account evidence. */ } }
   }
   return profiles.size === 1;
+}
+
+/** Verify the existing session after manual login; provider sign-in stays in the first browser. */
+export async function waitForSignedInBuilder(context: BrowserContext, timeoutMs = 10 * 60_000, pollMs = 400): Promise<Page> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const pages = context.pages().filter(page => !page.isClosed());
+    // A completed AWS session takes precedence over an old rejected OAuth tab.
+    for (const page of pages) {
+      if (await hasSignedInBuilderHeader(page).catch(() => false)) return page;
+    }
+    for (const page of pages) {
+      let address: URL;
+      try { address = new URL(page.url()); } catch { continue; }
+      if (address.origin === "https://accounts.google.com" && address.pathname === "/v3/signin/rejected") {
+        throw new GoogleCaptureLoginRejectedError();
+      }
+    }
+    if (!pages.length) break;
+    await new Promise<void>(resolve => setTimeout(resolve, Math.min(pollMs, Math.max(1, deadline - Date.now()))));
+  }
+  throw new Error("The signed-in AWS account was not observed. Reconnect and finish the browser sign-in before calibration.");
 }
 
 export function builderIdEmail(value: string): string {

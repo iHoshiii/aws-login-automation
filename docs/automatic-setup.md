@@ -40,6 +40,8 @@ npm run aws:connect -- --manual-browser
 4. The helper waits for its Chrome process to exit and reopens the same isolated profile with a loopback connection for calibration and session capture.
 5. In the reopened AWS page, open your account menu so the profile link is visible. The helper verifies the signed-in header, then asks for the article and controls described below.
 
+Finish every Google/GitHub and passkey prompt in the first Chrome window. Close it only after you are back on AWS with a signed-in account; then press Enter in the terminal. The reopened window is for checking the existing AWS session and selecting controls. If it returns to Google sign-in, close it and restart `npm run aws:connect -- --manual-browser` to finish login in the first window.
+
 If installed Chrome is not detected, set `AWS_MANUAL_CHROME_PATH` in `.env.local` to its executable path. Keep `.local/aws-manual-profile` private: it is ignored by Git but contains local browser credentials. Use the helper's isolated profile rather than copying your everyday Chrome data. This branch still requires successful account verification and a later live probe; it does not guarantee Google or AWS will accept the session.
 
 ### Calibrate after verified sign-in
