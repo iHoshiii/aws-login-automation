@@ -1698,4 +1698,260 @@ tbody tr:last-child td {
   *::after {
     transition: none !important;
   }
+  .monitor-status-dot {
+    animation: none !important;
+  }
+}
+
+/* ---------- Activity monitor ---------- */
+.monitor {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 28px 20px 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.monitor-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.monitor-top h1 {
+  font-size: clamp(22px, 2.4vw, 28px);
+}
+.monitor-signout {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 16px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.monitor-signout:hover {
+  color: var(--ink);
+  border-color: #cfd9df;
+}
+.monitor-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--muted);
+  border-radius: var(--radius);
+}
+.monitor-status .monitor-eyebrow {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 4px;
+}
+.monitor-status strong {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.4px;
+}
+.monitor-status-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: none;
+}
+.monitor-status.is-done {
+  border-left-color: var(--teal);
+}
+.monitor-status.is-done .monitor-status-dot {
+  background: var(--teal);
+}
+.monitor-status.is-running {
+  border-left-color: #c88a00;
+}
+.monitor-status.is-running .monitor-status-dot {
+  background: #e0a200;
+  animation: monitor-pulse 1.4s ease-in-out infinite;
+}
+.monitor-status.is-attention {
+  border-left-color: var(--danger);
+}
+.monitor-status.is-attention .monitor-status-dot {
+  background: var(--danger);
+}
+.monitor-status.is-waiting {
+  border-left-color: #9fb2bd;
+}
+@keyframes monitor-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.monitor-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+@media (min-width: 640px) {
+  .monitor-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+.monitor-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.monitor-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.monitor-card-head h2 {
+  font-size: 16px;
+}
+.monitor-badge {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #eef3f5;
+  color: var(--muted);
+}
+.monitor-badge.is-done {
+  background: var(--teal-soft);
+  color: var(--teal-dark);
+}
+.monitor-badge.is-running {
+  background: #fdf2d9;
+  color: #8a6400;
+}
+.monitor-badge.is-attention {
+  background: #f8e3e1;
+  color: var(--danger);
+}
+.monitor-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.monitor-bar-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+}
+.monitor-bar-value {
+  font-weight: 650;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.monitor-track {
+  height: 8px;
+  border-radius: 999px;
+  background: #edf2f4;
+  overflow: hidden;
+}
+.monitor-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--teal);
+  transition: width 0.5s ease;
+}
+.monitor-fill[data-complete="true"] {
+  background: linear-gradient(90deg, var(--teal), #17a398);
+}
+.monitor-observed {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+.monitor-recent {
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.monitor-recent h2 {
+  font-size: 13px;
+  margin-bottom: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.monitor-days {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.monitor-days li {
+  display: grid;
+  grid-template-columns: auto 10px 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 2px;
+  border-bottom: 1px solid #f0f4f6;
+}
+.monitor-days li:last-child {
+  border-bottom: none;
+}
+.monitor-day-date {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.monitor-day-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.monitor-days li.is-done .monitor-day-dot {
+  background: var(--teal);
+}
+.monitor-days li.is-running .monitor-day-dot {
+  background: #e0a200;
+}
+.monitor-days li.is-attention .monitor-day-dot {
+  background: var(--danger);
+}
+.monitor-days li.is-waiting .monitor-day-dot {
+  background: #9fb2bd;
+}
+.monitor-day-status {
+  font-size: 12px;
+  color: var(--muted);
+}
+.monitor-empty {
+  font-size: 13px;
+  color: var(--muted);
+}
+.monitor-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--muted);
 }

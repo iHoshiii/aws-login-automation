@@ -28,10 +28,10 @@ export function LoginForm() {
 
   return (
     <form onSubmit={submit} className="login-form">
-      <label htmlFor="dashboard-password">Dashboard password</label>
+      <label htmlFor="dashboard-password">Monitor password</label>
       <input id="dashboard-password" type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} disabled={pending} aria-describedby={error ? "login-error" : undefined} />
       {error && <p id="login-error" className="form-error" role="alert">{error}</p>}
-      <button type="submit" className="button primary" disabled={pending}>{pending ? "Signing in…" : "Open dashboard"}<span aria-hidden="true">→</span></button>
+      <button type="submit" className="button primary" disabled={pending}>{pending ? "Signing in…" : "Open monitor"}<span aria-hidden="true">→</span></button>
     </form>
   );
 }
